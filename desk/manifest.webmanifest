@@ -1,0 +1,10 @@
+{
+  "name": "문서 작업대",
+  "short_name": "작업대",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F6F3FC",
+  "theme_color": "#7C5CE0",
+  "icons": [{"src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}]
+}

@@ -72,6 +72,14 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .deco-bg b{position:absolute;inset:0;background:var(--bg)}
 .deco-banner{height:clamp(120px,24vw,200px);border-radius:18px;background-size:cover;background-position:center 50%;box-shadow:0 14px 30px -20px rgba(40,20,90,.6)}
 .masthead .deco-btn{min-height:36px;padding:6px 12px;font-size:13px;align-self:flex-start}
+.set-list{display:flex;flex-direction:column;gap:6px;color:var(--ink)}
+.set-item{display:grid;grid-template-columns:36px 1fr auto;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);border-radius:12px;text-align:left;background:var(--surface)}
+.set-item:hover{border-color:var(--accent)}
+.set-item .ic{width:36px;height:36px;border-radius:10px;background:var(--accent-weak);color:var(--accent);display:grid;place-items:center;font-size:18px}
+.set-item b{display:block;font-weight:500;font-size:15px}
+.set-item small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.set-item .go{color:var(--muted)}
+.set-item.static{cursor:default}.set-item.static:hover{border-color:var(--line)}
 .deco-set{display:flex;flex-direction:column;gap:12px;color:var(--ink)}
 .deco-prev{height:110px;border-radius:12px;background:var(--bg) center/cover no-repeat;display:grid;place-items:center;color:var(--muted);font-size:13px;border:1px dashed var(--line)}
 .deco-row{display:flex;flex-wrap:wrap;gap:8px}
@@ -404,6 +412,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
   <symbol id="i-brush" viewBox="0 0 24 24"><path d="M14 4l6 6-8 8H6v-6z"/><path d="M4 20h6"/></symbol>
   <symbol id="i-hand2" viewBox="0 0 24 24"><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12M11 11V4.5a1.5 1.5 0 0 1 3 0V12M14 11.5V6a1.5 1.5 0 0 1 3 0v7.5c0 4-2.5 6.5-6 6.5s-5-2-6.5-4.5L3 12.5a1.5 1.5 0 0 1 2.5-1.6L8 14"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
   <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
@@ -438,7 +447,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
         <h1>문서 작업대</h1>
         <p>PDF는 펜과 형광펜으로 필기하고, 한글·워드·메모장 문서는 읽고 고치고, 엑셀은 표로 봅니다. 여기서 바로 녹음하면 필기와 함께 다시 볼 수 있고, 내보낸 파일은 바로 공유할 수 있습니다.</p>
       </div>
-      <button class="btn btn-ghost deco-btn" id="decoBtn" title="메인 화면 꾸미기">🖼 꾸미기</button>
+      <button class="btn btn-ghost deco-btn" id="setBtn" title="설정"><svg class="i"><use href="#i-gear"/></svg>설정</button>
       <input id="fileIn" type="file" accept=".pdf,.pptx,.hwpx,.docx,.txt,.md,.xlsx,.xlsm,.csv,.hwp,application/pdf" class="sr">
     </header>
 
@@ -926,7 +935,7 @@ async function decoPick(file){
   if(cap.assets){ try{ const up=await cap.assets.upload(blob,{type:'image/jpeg'}); if(DECO.assetId) cap.assets.delete(DECO.assetId).catch(()=>{}); DECO.assetId=up.id; DECO.url=up.url||('./_blob/'+up.id); return true; }catch(e){ console.warn(e); } }
   DECO.url=URL.createObjectURL(blob); toast('이 화면에서는 사진을 저장할 수 없어 지금만 보입니다',3500); return true;
 }
-$('#decoBtn').onclick=()=>{
+function openDeco(){
   const scrim=$('#scrim'); $('#sheetTitle').textContent='메인 화면 꾸미기'; const body=$('#sheetBody'); body.replaceChildren();
   const box=el('div','deco-set'); const prev=el('div','deco-prev',DECO.url?'':'아직 고른 사진이 없습니다');
   const paintPrev=()=>{ prev.style.backgroundImage=DECO.url?`url("${DECO.url}")`:''; prev.textContent=DECO.url?'':'아직 고른 사진이 없습니다'; };
@@ -943,9 +952,33 @@ $('#decoBtn').onclick=()=>{
   box.append(prev,ckRow,sPos,sBlur,sDim,tip); syncSl(); body.append(box,inp);
   const acts=$('#sheetActs'); acts.replaceChildren();
   const clear=el('button','btn btn-ghost','사진 빼기'); clear.onclick=()=>{ if(DECO.assetId&&cap.assets) cap.assets.delete(DECO.assetId).catch(()=>{}); DECO.url=null; DECO.assetId=null; paintPrev(); applyDeco(); saveDeco(); };
-  const done=el('button','btn btn-ghost','닫기'); done.onclick=()=>scrim.hidden=true;
+  const done=el('button','btn btn-ghost','‹ 설정'); done.onclick=()=>openSettings();
   acts.append(clear,done,pick); scrim.hidden=false;
 };
+
+/* ================= settings ================= */
+async function openSettings(){
+  const scrim=$('#scrim'); $('#sheetTitle').textContent='설정'; const body=$('#sheetBody'); body.replaceChildren();
+  const list=el('div','set-list');
+  const item=(icon,title,sub,onClick)=>{ const b=el(onClick?'button':'div','set-item'+(onClick?'':' static')); const i=el('span','ic',icon); const t=el('span'); t.append(el('b',null,title)); const s=el('small',null,sub); t.append(s); b.append(i,t); if(onClick){ b.append(el('span','go','›')); b.onclick=onClick; } list.append(b); return s; };
+  item('🖼','메인 화면 꾸미기',DECO.url?'사진을 넣어 두었습니다 · 배너, 배경, 사진 카드':'좋아하는 사진을 배너나 배경으로',()=>openDeco());
+  const tpl=await userTpl().catch(()=>null);
+  const inp=el('input'); inp.type='file'; inp.accept='.hwpx'; inp.className='sr';
+  const tplSub=item('한','한글(HWPX) 저장 견본',tpl?`지금 견본: ${tpl.name}`:'아직 없음 · 한글 파일을 하나 고르면 그 서식으로 저장됩니다',()=>inp.click());
+  inp.onchange=async()=>{ const f=inp.files[0]; inp.value=''; if(!f) return; if(extOf(f.name)!=='hwpx'){ toast('HWPX 파일을 골라 주세요'); return; }
+    if(!cap.assets){ toast('이 화면에서는 견본을 저장할 수 없습니다'); return; }
+    tplSub.textContent='견본 올리는 중…'; const m={}; await storeOriginal(m,f);
+    if(!m.orig){ tplSub.textContent='견본을 저장하지 못했습니다'; return; }
+    const old=await userTpl().catch(()=>null); setUserTpl({orig:m.orig,size:f.size,name:f.name}); ED.tplBytes=null;
+    if(old?.orig && !library.some(x=>x.orig===old.orig)) for(const id of old.orig) cap.assets.delete(id).catch(()=>{});
+    tplSub.textContent=`지금 견본: ${f.name}`; toast('한글로 저장할 때 이 파일의 글꼴과 문단 모양을 씁니다',3500); };
+  let usage='확인 중'; try{ const u=(await cap.assets?.list())?.usage; if(u?.bytes!=null) usage=`${fmtSize(u.bytes)} 사용${u.maxBytes?` · 남은 공간 ${fmtSize(Math.max(0,u.maxBytes-u.bytes))}`:''}`; else usage='알 수 없음'; }catch{ usage='알 수 없음'; }
+  item('💾','저장 공간',`${library.length}개 문서 · ${usage}`,null);
+  body.append(list,inp);
+  const acts=$('#sheetActs'); acts.replaceChildren(); const close=el('button','btn btn-ghost','닫기'); close.onclick=()=>scrim.hidden=true; acts.append(close);
+  scrim.hidden=false;
+}
+$('#setBtn').onclick=openSettings;
 
 /* ================= new blank document ================= */
 $('#tNew').onclick=async()=>{

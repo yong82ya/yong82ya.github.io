@@ -61,6 +61,24 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)}
 
 .menu{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.menu.has-photo{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:860px){.menu.has-photo{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tphoto{padding:0;background-size:cover;background-position:center;cursor:default;min-height:150px}
+.tphoto:hover{transform:none;box-shadow:none}
+#home{position:relative}
+#home .shell{position:relative;z-index:1}
+.deco-bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.deco-bg i{position:absolute;inset:-30px;background-size:cover;background-position:center}
+.deco-bg b{position:absolute;inset:0;background:var(--bg)}
+.deco-banner{height:clamp(120px,24vw,200px);border-radius:18px;background-size:cover;background-position:center 50%;box-shadow:0 14px 30px -20px rgba(40,20,90,.6)}
+.masthead .deco-btn{min-height:36px;padding:6px 12px;font-size:13px;align-self:flex-start}
+.deco-set{display:flex;flex-direction:column;gap:12px;color:var(--ink)}
+.deco-prev{height:110px;border-radius:12px;background:var(--bg) center/cover no-repeat;display:grid;place-items:center;color:var(--muted);font-size:13px;border:1px dashed var(--line)}
+.deco-row{display:flex;flex-wrap:wrap;gap:8px}
+.deco-row label.ck{display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:14px}
+.deco-row label.ck:has(input:checked){border-color:var(--accent);background:var(--accent-weak);color:var(--accent)}
+.deco-sl{display:grid;grid-template-columns:110px 1fr 44px;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.deco-sl input{width:100%;accent-color:var(--accent)}
 @media (max-width:640px){.menu{grid-template-columns:1fr}}
 .tile{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;padding:20px 18px 18px;border-radius:18px;background:var(--surface);border:1px solid var(--line);cursor:pointer;transition:transform .12s, box-shadow .12s;min-height:150px}
 .tile:hover{transform:translateY(-2px);box-shadow:0 14px 30px -18px rgba(60,40,140,.5)}
@@ -412,18 +430,22 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 </svg>
 
 <section id="home">
+  <div class="deco-bg" id="decoBg" hidden></div>
   <div class="shell">
+    <div class="deco-banner" id="decoBanner" hidden></div>
     <header class="masthead">
       <div>
         <h1>문서 작업대</h1>
         <p>PDF는 펜과 형광펜으로 필기하고, 한글·워드·메모장 문서는 읽고 고치고, 엑셀은 표로 봅니다. 여기서 바로 녹음하면 필기와 함께 다시 볼 수 있고, 내보낸 파일은 바로 공유할 수 있습니다.</p>
       </div>
+      <button class="btn btn-ghost deco-btn" id="decoBtn" title="메인 화면 꾸미기">🖼 꾸미기</button>
       <input id="fileIn" type="file" accept=".pdf,.pptx,.hwpx,.docx,.txt,.md,.xlsx,.xlsm,.csv,.hwp,application/pdf" class="sr">
     </header>
 
     <nav class="menu" aria-label="시작하기">
       <label class="tile t1" for="fileIn"><span class="ti"><svg class="i"><use href="#i-open"/></svg></span><b>파일 열기</b><small>PDF · 한글 · 워드 · 엑셀 · PPT · 메모장</small></label>
       <button class="tile t2" id="tScan"><span class="ti"><svg class="i"><use href="#i-cam"/></svg></span><b>사진으로 PDF</b><small>무음으로 찍거나 앨범에서 골라 PDF로</small></button>
+      <div class="tile tphoto" id="decoCard" hidden aria-hidden="true"></div>
       <button class="tile t3" id="tNew"><span class="ti"><svg class="i"><use href="#i-new"/></svg></span><b>새 문서</b><small>빈 문서에 바로 쓰고 한글·워드로 저장</small></button>
     </nav>
 
@@ -887,6 +909,43 @@ const drop=$('#drop');
 ['dragenter','dragover'].forEach(t=>document.addEventListener(t,e=>{ if($('#home').hidden) return; e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave','drop'].forEach(t=>document.addEventListener(t,e=>{ if(t==='dragleave' && e.relatedTarget) return; drop.classList.remove('over'); }));
 document.addEventListener('drop',e=>{ if($('#home').hidden) return; e.preventDefault(); const f=[...(e.dataTransfer?.files||[])][0]; if(f) openLocalFile(f); });
+
+/* ================= home decoration (the viewer picks their own photo) ================= */
+const DECO={url:null, banner:true, bg:false, card:false, blur:6, dim:55, pos:50};
+async function loadDeco(){ if(!cap.db) return; try{ const s=await docRef('deco').get(); if(s.exists) Object.assign(DECO,s.data()); }catch{} applyDeco(); }
+function saveDeco(){ if(cap.db) docRef('deco').set({...DECO}).catch(e=>console.warn('deco',e)); }
+function applyDeco(){
+  const u=DECO.url; const css=u?`url("${u}")`:'';
+  const bn=$('#decoBanner'); bn.hidden=!(u&&DECO.banner); bn.style.backgroundImage=css; bn.style.backgroundPosition=`center ${DECO.pos}%`;
+  const bg=$('#decoBg'); bg.hidden=!(u&&DECO.bg); bg.replaceChildren(); if(u&&DECO.bg){ const i=document.createElement('i'), b=document.createElement('b'); i.style.backgroundImage=css; i.style.filter=`blur(${DECO.blur}px)`; b.style.opacity=DECO.dim/100; bg.append(i,b); }
+  const cd=$('#decoCard'); cd.hidden=!(u&&DECO.card); cd.style.backgroundImage=css; $('.menu').classList.toggle('has-photo',!!(u&&DECO.card));
+}
+async function decoPick(file){
+  const bmp=await createImageBitmap(file).catch(()=>null); if(!bmp){ toast('이 그림은 열 수 없습니다'); return false; }
+  const c=fitCanvas(bmp,1800); bmp.close?.(); const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.85)); c.width=c.height=0;
+  if(cap.assets){ try{ const up=await cap.assets.upload(blob,{type:'image/jpeg'}); if(DECO.assetId) cap.assets.delete(DECO.assetId).catch(()=>{}); DECO.assetId=up.id; DECO.url=up.url||('./_blob/'+up.id); return true; }catch(e){ console.warn(e); } }
+  DECO.url=URL.createObjectURL(blob); toast('이 화면에서는 사진을 저장할 수 없어 지금만 보입니다',3500); return true;
+}
+$('#decoBtn').onclick=()=>{
+  const scrim=$('#scrim'); $('#sheetTitle').textContent='메인 화면 꾸미기'; const body=$('#sheetBody'); body.replaceChildren();
+  const box=el('div','deco-set'); const prev=el('div','deco-prev',DECO.url?'':'아직 고른 사진이 없습니다');
+  const paintPrev=()=>{ prev.style.backgroundImage=DECO.url?`url("${DECO.url}")`:''; prev.textContent=DECO.url?'':'아직 고른 사진이 없습니다'; };
+  paintPrev();
+  const inp=el('input'); inp.type='file'; inp.accept='image/*'; inp.className='sr'; inp.id='decoIn';
+  const pick=el('label','btn btn-primary','앨범에서 사진 고르기'); pick.htmlFor='decoIn';
+  inp.onchange=async()=>{ const f=inp.files[0]; inp.value=''; if(!f) return; if(await decoPick(f)){ paintPrev(); applyDeco(); saveDeco(); } };
+  const ckRow=el('div','deco-row'); const ck=(key,label)=>{ const l=el('label','ck'); const c=el('input'); c.type='checkbox'; c.checked=!!DECO[key]; c.onchange=()=>{ DECO[key]=c.checked; applyDeco(); saveDeco(); syncSl(); }; l.append(c,document.createTextNode(label)); return l; };
+  ckRow.append(ck('banner','위쪽 배너'),ck('bg','전체 배경'),ck('card','사진 카드'));
+  const sl=(key,label,min,max,unit)=>{ const r=el('div','deco-sl'); const s=el('input'); s.type='range'; s.min=min; s.max=max; s.value=DECO[key]; const v=el('span',null,DECO[key]+unit); s.oninput=()=>{ DECO[key]=+s.value; v.textContent=s.value+unit; applyDeco(); }; s.onchange=saveDeco; r.append(el('span',null,label),s,v); return r; };
+  const sPos=sl('pos','배너 위치 (위↔아래)',0,100,'%'), sBlur=sl('blur','배경 흐리게',0,20,'px'), sDim=sl('dim','배경 밝게 덮기',0,90,'%');
+  const syncSl=()=>{ sPos.hidden=!DECO.banner; sBlur.hidden=sDim.hidden=!DECO.bg; };
+  const tip=el('p',null,'고른 사진은 메인 화면에만 보이고, 문서를 열면 원래 화면으로 돌아옵니다.'); tip.style.cssText='margin:0;font-size:12px;color:var(--muted)';
+  box.append(prev,ckRow,sPos,sBlur,sDim,tip); syncSl(); body.append(box,inp);
+  const acts=$('#sheetActs'); acts.replaceChildren();
+  const clear=el('button','btn btn-ghost','사진 빼기'); clear.onclick=()=>{ if(DECO.assetId&&cap.assets) cap.assets.delete(DECO.assetId).catch(()=>{}); DECO.url=null; DECO.assetId=null; paintPrev(); applyDeco(); saveDeco(); };
+  const done=el('button','btn btn-ghost','닫기'); done.onclick=()=>scrim.hidden=true;
+  acts.append(clear,done,pick); scrim.hidden=false;
+};
 
 /* ================= new blank document ================= */
 $('#tNew').onclick=async()=>{
@@ -3514,6 +3573,7 @@ setTool(V.tool);
 (async()=>{
   await initCaps();
   setStoreLine();
+  loadDeco();
   await loadLibrary();
 })();
 </script>

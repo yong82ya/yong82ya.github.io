@@ -472,6 +472,11 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
       <div class="recent2" id="recent2"></div>
     </div>
 
+    <div id="inboxWrap" hidden>
+      <div class="shelf-head" style="margin-bottom:8px"><h2>☁ 드라이브 스캔함 <span id="inboxCount"></span></h2><button class="btn btn-ghost" id="inboxBundle" hidden style="min-height:32px;padding:4px 10px;font-size:13px"></button></div>
+      <div class="recent2" id="inboxList"></div>
+    </div>
+
     <div class="drop" id="drop">
       <svg class="i"><use href="#i-open"/></svg>
       <span><strong>파일을 여기로 끌어다 놓아도 됩니다.</strong> 아이패드에서는 위 버튼을 누르면 파일 앱이 열립니다.</span>
@@ -725,15 +730,19 @@ function coll(path, filters=[], lim=1e9){
     }
   };
 }
+// which library documents changed since the last Drive sync (doc id = 4th path part: data/users/me/<id>/...)
+const DIRTY_KEY='desk.sync.dirty';
+function loadDirty(){ try{ return JSON.parse(localStorage.getItem(DIRTY_KEY)||'{}'); }catch{ return {}; } }
+function markDirty(path){ if(window.DESK_SYNC_APPLYING) return; const p=path.split('/'); if(p[0]!=='data'||p[1]!=='users'||p.length<4) return; const d=loadDirty(); d[p[3]]=Date.now(); try{ localStorage.setItem(DIRTY_KEY,JSON.stringify(d)); }catch{} window.dispatchEvent(new Event('desk-dirty')); }
 function docr(path){
   return {
     path, id:path.split('/').pop(),
     async get(){ const v=await tx('docs','readonly',s=>s.get(path)); return snap(this.id,v); },
-    async set(d,opt){ let v=clone(d); if(opt?.merge){ const old=await tx('docs','readonly',s=>s.get(path)); v={...(old||{}),...v}; } await tx('docs','readwrite',s=>s.put(v,path)); },
-    async update(d){ const old=await tx('docs','readonly',s=>s.get(path)); if(old===undefined) throw {code:'not_found'}; await tx('docs','readwrite',s=>s.put({...old,...clone(d)},path)); },
+    async set(d,opt){ let v=clone(d); if(opt?.merge){ const old=await tx('docs','readonly',s=>s.get(path)); v={...(old||{}),...v}; } await tx('docs','readwrite',s=>s.put(v,path)); markDirty(path); },
+    async update(d){ const old=await tx('docs','readonly',s=>s.get(path)); if(old===undefined) throw {code:'not_found'}; await tx('docs','readwrite',s=>s.put({...old,...clone(d)},path)); markDirty(path); },
     async delete(){
       // remove the doc and everything nested under it
-      await tx('docs','readwrite',s=>{ s.delete(path); const pre=path+'/'; s.delete(IDBKeyRange.bound(pre, pre+'￿')); return null; });
+      await tx('docs','readwrite',s=>{ s.delete(path); const pre=path+'/'; s.delete(IDBKeyRange.bound(pre, pre+'￿')); return null; }); markDirty(path);
     },
     collection(c){ return coll(path+'/'+c); }
   };
@@ -748,7 +757,16 @@ const assets={
   async getBlob(id){ return tx('blobs','readonly',s=>s.get(id)); }
 };
 const user={ async id(){ return 'me'; } };
-window.DESK={ idb, assets, db };
+// raw access for the Drive sync
+const raw={
+  async entries(base){ const out={}; await tx('docs','readonly',s=>{ const c=s.openCursor(IDBKeyRange.bound(base, base+'/￿')); c.onsuccess=()=>{ const cur=c.result; if(!cur) return; if(cur.key===base||cur.key.startsWith(base+'/')) out[cur.key.slice(base.length)]=cur.value; cur.continue(); }; return null; }); return out; },
+  async replace(base, map){ await tx('docs','readwrite',s=>{ s.delete(base); s.delete(IDBKeyRange.bound(base+'/', base+'/￿')); for(const [k,v] of Object.entries(map||{})) s.put(v, base+k); return null; }); },
+  async hasBlob(id){ return !!(await tx('blobs','readonly',s=>s.getKey?s.getKey(id):s.get(id))); },
+  async putBlob(id,b){ await tx('blobs','readwrite',s=>s.put(b,id)); },
+  getBlob:id=>assets.getBlob(id),
+  loadDirty, saveDirty(d){ try{ localStorage.setItem(DIRTY_KEY,JSON.stringify(d)); }catch{} }
+};
+window.DESK={ idb, assets, db, raw };
 window.claude={ use: async n=>({db,assets,user})[n]??null };
 
 // stored files are addressed as "_blob/<id>"; answer those from this device even before the service worker runs
@@ -756,12 +774,165 @@ const of=window.fetch.bind(window);
 window.fetch=async(u,...r)=>{
   const s=typeof u==='string'?u:(u?.url||'');
   const m=s.match(/(?:^|\/)_blob\/([\w-]+)$/);
-  if(m){ const b=await assets.getBlob(m[1]); if(!b) return new Response('not found',{status:404}); return new Response(b,{headers:{'content-type':b.type||'application/octet-stream'}}); }
+  if(m){ let b=await assets.getBlob(m[1]); if(!b && window.DRIVE?.fetchBlob){ try{ b=await window.DRIVE.fetchBlob(m[1]); }catch(e){ console.warn('drive blob',e); } } if(!b) return new Response('not found',{status:404}); return new Response(b,{headers:{'content-type':b.type||'application/octet-stream'}}); }
   return of(u,...r);
 };
 // ask the browser not to clear this storage on its own
 try{ navigator.storage?.persist?.(); }catch{}
 if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('sw',e)));
+})();
+</script>
+<script>// 문서 작업대 — Google Drive sync (GitHub Pages copy only).
+// Drive layout:  내 드라이브/문서 작업대/스캔함        ← put scans here from any device (PDF or pictures)
+//                                     /스캔함/가져온 스캔
+//                                     /작업대 데이터/<docId>.json   one file per library document (meta, ink, memos, text…)
+//                                     /작업대 데이터/파일/<assetId> originals, recordings, pictures
+(()=>{
+const CLIENT_ID='502702795476-0p5hgtuqsll1p7o6pm8e4650el2qu4ge.apps.googleusercontent.com';
+const SCOPE='https://www.googleapis.com/auth/drive';
+const API='https://www.googleapis.com/drive/v3', UP='https://www.googleapis.com/upload/drive/v3';
+const BASE='data/users/me/';
+const ls={ get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch{ return d; } }, set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch{} } };
+const ss={ get(k){ try{ return JSON.parse(sessionStorage.getItem(k)||'null'); }catch{ return null; } }, set(k,v){ try{ sessionStorage.setItem(k,JSON.stringify(v)); }catch{} } };
+const S={ token:null, exp:0, folders:null, busy:false, last:ls.get('desk.drive.last',0), err:null, inbox:[], listeners:new Set(), email:ls.get('desk.drive.email','') };
+const emit=()=>S.listeners.forEach(f=>{ try{ f(); }catch{} });
+const on=()=>!!ls.get('desk.drive.on',false);
+
+/* ---------- sign-in (Google Identity Services token client) ---------- */
+let gisP=null;
+function loadGis(){ if(window.google?.accounts?.oauth2) return Promise.resolve(); if(!gisP) gisP=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://accounts.google.com/gsi/client'; s.async=true; s.onload=()=>res(); s.onerror=()=>{ gisP=null; rej(new Error('구글 로그인 도구를 불러오지 못했습니다')); }; document.head.append(s); }); return gisP; }
+function tokenOk(){ if(S.token && Date.now()<S.exp-60000) return true; const t=ss.get('desk.drive.tok'); if(t && Date.now()<t.exp-60000){ S.token=t.token; S.exp=t.exp; return true; } return false; }
+// interactive: must run from a tap (it opens Google's window)
+async function signIn(){
+  await loadGis();
+  return new Promise((res,rej)=>{
+    const tc=google.accounts.oauth2.initTokenClient({ client_id:CLIENT_ID, scope:SCOPE, prompt:on()?'':'consent',
+      callback:r=>{ if(r.error){ rej(new Error(r.error)); return; } S.token=r.access_token; S.exp=Date.now()+(+r.expires_in||3600)*1000; ss.set('desk.drive.tok',{token:S.token,exp:S.exp}); ls.set('desk.drive.on',true); S.err=null; res(S.token); },
+      error_callback:e=>rej(new Error(e?.type==='popup_closed'?'로그인 창이 닫혔습니다':'구글 로그인에 실패했습니다')) });
+    tc.requestAccessToken();
+  });
+}
+async function api(method,url,body,headers){
+  if(!tokenOk()) throw Object.assign(new Error('auth'),{code:'auth'});
+  const r=await fetch(url,{method,headers:{Authorization:'Bearer '+S.token,...(headers||{})},body});
+  if(r.status===401){ S.token=null; ss.set('desk.drive.tok',null); throw Object.assign(new Error('auth'),{code:'auth'}); }
+  if(!r.ok){ let t=''; try{ t=await r.text(); }catch{} throw new Error(`드라이브 오류 ${r.status} ${t.slice(0,160)}`); }
+  return r;
+}
+const J=async r=>r.json();
+const qe=s=>encodeURIComponent(s);
+const esc=s=>String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+
+/* ---------- folders ---------- */
+async function folder(name,parent){
+  const q=`name='${esc(name)}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${parent}' in parents`;
+  const r=await J(await api('GET',`${API}/files?q=${qe(q)}&fields=files(id)&pageSize=10`));
+  if(r.files?.length) return r.files[0].id;
+  const c=await J(await api('POST',`${API}/files?fields=id`,JSON.stringify({name,mimeType:'application/vnd.google-apps.folder',parents:[parent]}),{'Content-Type':'application/json'}));
+  return c.id;
+}
+async function folders(){
+  if(S.folders) return S.folders;
+  const saved=ls.get('desk.drive.folders',null);
+  if(saved){ try{ await api('GET',`${API}/files/${saved.root}?fields=id,trashed`).then(J).then(f=>{ if(f.trashed) throw 0; }); S.folders=saved; return saved; }catch(e){ if(e?.code==='auth') throw e; } }
+  const root=await folder('문서 작업대','root'); const inbox=await folder('스캔함',root); const done=await folder('가져온 스캔',inbox); const data=await folder('작업대 데이터',root); const files=await folder('파일',data);
+  S.folders={root,inbox,done,data,files}; ls.set('desk.drive.folders',S.folders); return S.folders;
+}
+async function listAll(q,fields){ let out=[], pt=''; do{ const r=await J(await api('GET',`${API}/files?q=${qe(q)}&fields=nextPageToken,files(${fields})&pageSize=1000${pt?'&pageToken='+qe(pt):''}`)); out=out.concat(r.files||[]); pt=r.nextPageToken; }while(pt); return out; }
+// create or replace a file's content (resumable upload works for any size)
+async function put(fileId, meta, blob){
+  const init=await api(fileId?'PATCH':'POST', fileId?`${UP}/files/${fileId}?uploadType=resumable`:`${UP}/files?uploadType=resumable`, JSON.stringify(meta), {'Content-Type':'application/json; charset=UTF-8','X-Upload-Content-Type':blob.type||'application/octet-stream'});
+  const loc=init.headers.get('Location'); if(!loc) throw new Error('업로드 주소를 받지 못했습니다');
+  const r=await fetch(loc,{method:'PUT',body:blob}); if(!r.ok) throw new Error('업로드 실패 '+r.status);
+  return (await r.json()).id;
+}
+const download=id=>api('GET',`${API}/files/${id}?alt=media`).then(r=>r.blob());
+
+/* ---------- library documents ---------- */
+const assetRe=/(?:"|_blob\/)(a[0-9a-z]{10,16})(?=["\\/?#\s]|$)/g;
+function assetsIn(obj){ const s=JSON.stringify(obj); const out=new Set(); let m; assetRe.lastIndex=0; while((m=assetRe.exec(s))) out.add(m[1]); return [...out]; }
+const busyIds=()=>{ try{ return window.deskBusyIds?.()||[]; }catch{ return []; } };
+async function pushBlobs(ids,F){
+  const map=ls.get('desk.drive.blobs',{});
+  for(const id of ids){ if(map[id]) continue; const b=await DESK.raw.getBlob(id); if(!b) continue;
+    const fid=await put(null,{name:id,parents:[F.files],appProperties:{asset:id}},b); map[id]=fid; ls.set('desk.drive.blobs',map); }
+}
+async function blobFileId(id,F){
+  const map=ls.get('desk.drive.blobs',{}); if(map[id]) return map[id];
+  const r=await listAll(`'${F.files}' in parents and name='${esc(id)}' and trashed=false`,'id'); if(!r.length) return null;
+  map[id]=r[0].id; ls.set('desk.drive.blobs',map); return r[0].id;
+}
+async function fetchBlob(id){
+  if(!on()||!tokenOk()) return null; const F=await folders(); const fid=await blobFileId(id,F); if(!fid) return null;
+  const b=await download(fid); await DESK.raw.putBlob(id,b); return b;
+}
+async function sync(){
+  if(S.busy||!on()) return; if(!tokenOk()){ S.err='auth'; emit(); return; }
+  S.busy=true; S.err=null; emit(); let pulled=0, pushed=0;
+  try{
+    const F=await folders();
+    const known=ls.get('desk.drive.known',{}), remoteIds=ls.get('desk.drive.rid',{});
+    // 1) what is on Drive
+    const files=await listAll(`'${F.data}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'`,'id,name,appProperties');
+    const remote={}; for(const f of files){ const id=f.appProperties?.deskId; if(!id) continue; remote[id]={fid:f.id, upd:+f.appProperties.updatedAt||0, del:f.appProperties.deleted==='1'}; remoteIds[id]=f.id; }
+    const dirty=DESK.raw.loadDirty(); const busy=new Set(busyIds());
+    // 2) bring newer documents here (unless this device changed them later, or one is open right now)
+    const wantBlobs=new Set();
+    for(const [id,r] of Object.entries(remote)){
+      if(r.upd<=(known[id]||0)) continue; if(dirty[id] && dirty[id]>r.upd) continue; if(busy.has(id)) continue;
+      const doc=JSON.parse(await (await download(r.fid)).text());
+      window.DESK_SYNC_APPLYING=true;
+      try{ await DESK.raw.replace(BASE+id, doc.deleted?{}:doc.entries); } finally{ window.DESK_SYNC_APPLYING=false; }
+      known[id]=r.upd; pulled++;
+      if(!doc.deleted) for(const a of assetsIn(doc.entries)) wantBlobs.add(a);
+    }
+    { const d=DESK.raw.loadDirty(); for(const k of Object.keys(d)) if(known[k] && known[k]>=d[k]) delete d[k]; DESK.raw.saveDirty(d); } // replaced by a newer copy from Drive
+    // 3) send this device's changes
+    const d2=DESK.raw.loadDirty();
+    for(const [id,t] of Object.entries(d2)){
+      if(busy.has(id) && Date.now()-t<4000) continue; // let a save in progress settle
+      const entries=await DESK.raw.entries(BASE+id); const deleted=!Object.keys(entries).length;
+      if(deleted && !remote[id]){ delete d2[id]; continue; }
+      if(!deleted) await pushBlobs(assetsIn(entries),F);
+      const body=new Blob([JSON.stringify({v:1,id,updatedAt:t,deleted,entries:deleted?{}:entries})],{type:'application/json'});
+      const meta={name:id+'.json',appProperties:{deskId:id,updatedAt:String(t),deleted:deleted?'1':'0'}}; if(!remote[id]) meta.parents=[F.data];
+      const fid=await put(remote[id]?.fid||null,meta,body); remoteIds[id]=fid; known[id]=t; pushed++;
+      const cur=DESK.raw.loadDirty(); if(cur[id]===t){ delete cur[id]; DESK.raw.saveDirty(cur); }
+    }
+    ls.set('desk.drive.known',known); ls.set('desk.drive.rid',remoteIds);
+    // 4) scans waiting in the inbox
+    S.inbox=await listAll(`'${F.inbox}' in parents and trashed=false and (mimeType='application/pdf' or mimeType contains 'image/')`,'id,name,mimeType,size,modifiedTime');
+    S.inbox.sort((a,b)=>(b.modifiedTime||'').localeCompare(a.modifiedTime||''));
+    S.last=Date.now(); ls.set('desk.drive.last',S.last);
+    if(pulled) await window.deskReload?.();
+    emit();
+    // originals for documents that just arrived, in the background
+    for(const a of wantBlobs){ try{ if(!(await DESK.raw.getBlob(a))) await fetchBlob(a); }catch(e){ console.warn('blob',a,e); } }
+  }catch(e){ console.warn('sync',e); S.err=e?.code==='auth'?'auth':(e?.message||'동기화 실패'); }
+  finally{ S.busy=false; emit(); }
+  return {pulled,pushed};
+}
+// take scans from the inbox: PDFs open as documents, pictures are bundled into one PDF
+async function importInbox(ids){
+  const F=await folders(); const pick=S.inbox.filter(f=>ids.includes(f.id)); if(!pick.length) return;
+  const pdfs=pick.filter(f=>f.mimeType==='application/pdf'), imgs=pick.filter(f=>f.mimeType!=='application/pdf');
+  const move=f=>api('PATCH',`${API}/files/${f.id}?addParents=${F.done}&removeParents=${F.inbox}&fields=id`,'{}',{'Content-Type':'application/json'}).catch(e=>console.warn('move',e));
+  for(const f of pdfs){ const b=await download(f.id); await window.deskOpenFile(new File([b],f.name,{type:'application/pdf'})); await move(f); }
+  if(imgs.length){ const fl=[]; for(const f of imgs) fl.push(new File([await download(f.id)],f.name,{type:f.mimeType})); await window.deskBundle(fl); for(const f of imgs) await move(f); }
+  S.inbox=S.inbox.filter(f=>!ids.includes(f.id)); emit();
+}
+// first connection on this device: everything already here goes up too
+async function seed(){ if(ls.get('desk.drive.seeded',false)) return; try{ const snap=await DESK.db.collection('data/users/me').get(); const d=DESK.raw.loadDirty(); const t=Date.now(); for(const x of snap.docs) if(!d[x.id]) d[x.id]=t; DESK.raw.saveDirty(d); ls.set('desk.drive.seeded',true); }catch(e){ console.warn('seed',e); } }
+async function connect(){ await signIn(); await seed(); try{ const u=await J(await api('GET',`${API}/about?fields=user(emailAddress)`)); S.email=u.user?.emailAddress||''; ls.set('desk.drive.email',S.email); }catch{} emit(); await sync(); }
+function disconnect(){ try{ if(S.token) google?.accounts?.oauth2?.revoke?.(S.token,()=>{}); }catch{} S.token=null; ss.set('desk.drive.tok',null); ls.set('desk.drive.on',false); ls.set('desk.drive.folders',null); ls.set('desk.drive.seeded',false); S.folders=null; S.inbox=[]; emit(); }
+
+window.DRIVE={ connect, disconnect, sync, importInbox, fetchBlob, state:S, isOn:on, tokenOk, onChange(f){ S.listeners.add(f); return ()=>S.listeners.delete(f); },
+  reconnect:()=>signIn().then(()=>sync()) };
+// keep in step: shortly after changes, every couple of minutes, and when the app comes back to the front
+let dT=null; window.addEventListener('desk-dirty',()=>{ if(!on()||!tokenOk()) return; clearTimeout(dT); dT=setTimeout(sync,8000); });
+setInterval(()=>{ if(on()&&tokenOk()&&!document.hidden) sync(); },120000);
+document.addEventListener('visibilitychange',()=>{ if(on()&&tokenOk()) sync(); });
+window.addEventListener('load',()=>setTimeout(()=>{ if(on()) { if(tokenOk()) sync(); else { S.err='auth'; emit(); } } },1500));
 })();
 </script>
 <script type="module">
@@ -1009,6 +1180,7 @@ async function openSettings(){
     if(old?.orig && !library.some(x=>x.orig===old.orig)) for(const id of old.orig) cap.assets.delete(id).catch(()=>{});
     tplSub.textContent=`지금 견본: ${f.name}`; toast('한글로 저장할 때 이 파일의 글꼴과 문단 모양을 씁니다',3500); };
   let usage='확인 중'; try{ const u=(await cap.assets?.list())?.usage; if(u?.bytes!=null) usage=`${fmtSize(u.bytes)} 사용${u.maxBytes?` · 남은 공간 ${fmtSize(Math.max(0,u.maxBytes-u.bytes))}`:''}`; else usage='알 수 없음'; }catch{ usage='알 수 없음'; }
+  if(window.DRIVE) item('☁','구글 드라이브 동기화', !DRIVE.isOn()?'꺼짐 · 노트북·아이패드·폰을 이어 주고 스캔함을 받습니다':(DRIVE.state.err==='auth'?'다시 연결이 필요합니다':'켜짐 · '+agoText(DRIVE.state.last)), ()=>openDrivePanel());
   item('💾','저장 공간',`${library.length}개 문서 · ${usage}`,null);
   body.append(list,inp);
   const acts=$('#sheetActs'); acts.replaceChildren(); const close=el('button','btn btn-ghost','닫기'); close.onclick=()=>scrim.hidden=true; acts.append(close);
@@ -3973,11 +4145,59 @@ async function openPptx(file){
   storeNewDoc(meta, pdfFile);
 }
 
+/* ================= Google Drive (GitHub Pages copy) ================= */
+window.deskReload=async()=>{ await loadLibrary(); };
+window.deskOpenFile=f=>openLocalFile(f);
+window.deskBundle=fl=>bundleImages(fl);
+window.deskBusyIds=()=>[V.meta?.id, ED.meta?.id, SH.meta?.id].filter(Boolean);
+const agoText=t=>{ if(!t) return '아직 안 함'; const s=(Date.now()-t)/1000; if(s<60) return '방금'; if(s<3600) return Math.floor(s/60)+'분 전'; if(s<86400) return Math.floor(s/3600)+'시간 전'; return new Date(t).toLocaleDateString('ko-KR'); };
+function driveLine(){
+  const line=$('#storeLine'); const dot=line.querySelector('.dot'); const txt=line.lastChild; const D=window.DRIVE; if(!D) return;
+  line.onclick=null; line.style.cursor='';
+  if(!D.isOn()){ dot.className='dot warn'; txt.textContent='이 기기에만 저장됩니다 · 설정에서 구글 드라이브를 연결하면 다른 기기와 이어집니다'; return; }
+  const S=D.state;
+  if(S.err==='auth'){ dot.className='dot warn'; txt.textContent='구글 드라이브 연결이 잠시 끊겼습니다 · 여기를 눌러 다시 연결'; line.style.cursor='pointer'; line.onclick=()=>D.reconnect().catch(e=>toast(e.message||'연결하지 못했습니다',3500)); return; }
+  if(S.err){ dot.className='dot warn'; txt.textContent='동기화 문제: '+S.err.slice(0,80)+' · 여기를 눌러 다시 시도'; line.style.cursor='pointer'; line.onclick=()=>D.sync(); return; }
+  dot.className='dot ok'; txt.textContent=S.busy?'구글 드라이브와 맞추는 중…':`구글 드라이브와 동기화됨 · ${agoText(S.last)}`;
+}
+function renderInbox(){
+  const D=window.DRIVE, wrap=$('#inboxWrap'), box=$('#inboxList'); if(!D||!wrap) return;
+  const items=D.isOn()?D.state.inbox:[]; wrap.hidden=!items.length; box.replaceChildren(); if(!items.length) return;
+  $('#inboxCount').textContent=`${items.length}개`;
+  for(const f of items.slice(0,12)){ const b=el('button','rc'); b.append(el('span','f',f.mimeType==='application/pdf'?'PDF':'사진'), el('b',null,f.name.replace(/\.[^.]+$/,'')), el('small',null,f.modifiedTime?fmtDate(Date.parse(f.modifiedTime)):''));
+    b.title=f.name+' 가져와서 열기'; b.onclick=async()=>{ b.disabled=true; try{ await D.importInbox([f.id]); }catch(e){ console.warn(e); toast('가져오지 못했습니다',3000); b.disabled=false; } }; box.append(b); }
+  const imgs=items.filter(f=>f.mimeType!=='application/pdf'); $('#inboxBundle').hidden=imgs.length<2; $('#inboxBundle').textContent=`사진 ${imgs.length}장 PDF 하나로 묶기`;
+  $('#inboxBundle').onclick=async()=>{ try{ await D.importInbox(imgs.map(f=>f.id)); }catch(e){ console.warn(e); toast('가져오지 못했습니다',3000); } };
+}
+function openDrivePanel(){
+  const D=window.DRIVE; const scrim=$('#scrim'); $('#sheetTitle').textContent='구글 드라이브 동기화'; const body=$('#sheetBody'); body.replaceChildren();
+  const S=D.state; const box=el('div','set-list');
+  const p=(t)=>{ const x=el('p',null,t); x.style.cssText='margin:0 0 8px;color:var(--ink);font-size:14px;line-height:1.6'; return x; };
+  if(!D.isOn()){
+    box.append(p('연결하면 이 기기의 문서와 필기가 구글 드라이브의 "문서 작업대" 폴더에 저장되고, 노트북·아이패드·폰 어디서 열어도 이어집니다.'), p('폰에서 V플랫 등으로 찍은 스캔을 드라이브의 "문서 작업대/스캔함" 폴더로 보내면, 작업대 첫 화면에 바로 떠요.'));
+    const note=el('p',null,'처음 연결할 때 구글이 "확인되지 않은 앱"이라고 경고할 수 있어요. 직접 만든 앱이라 그렇습니다. "고급" → "문서 작업대(으)로 이동"을 누르면 됩니다.'); note.style.cssText='margin:0;font-size:12px;color:var(--muted)'; box.append(note);
+  } else {
+    box.append(p(`연결된 계정: ${S.email||'확인 중'}`), p(`마지막 동기화: ${agoText(S.last)}${S.busy?' · 지금 맞추는 중':''}`), p('스캔은 드라이브의 "문서 작업대/스캔함" 폴더에 넣으세요. 가져온 스캔은 "가져온 스캔" 폴더로 옮겨 둡니다.'));
+    if(S.err) box.append(p('최근 문제: '+(S.err==='auth'?'연결이 끊겨 다시 연결이 필요합니다':S.err)));
+  }
+  body.append(box);
+  const acts=$('#sheetActs'); acts.replaceChildren();
+  const back=el('button','btn btn-ghost','‹ 설정'); back.onclick=()=>openSettings(); acts.append(back);
+  if(!D.isOn()){ const go=el('button','btn btn-primary','구글 드라이브 연결'); go.onclick=async()=>{ go.disabled=true; go.textContent='연결하는 중…'; try{ await D.connect(); toast('구글 드라이브와 연결했습니다',3000); openDrivePanel(); }catch(e){ toast(e.message||'연결하지 못했습니다',4000); go.disabled=false; go.textContent='구글 드라이브 연결'; } }; acts.append(go); }
+  else {
+    const off=el('button','btn btn-ghost','연결 끊기'); off.onclick=async()=>{ const ok=await sheet('연결을 끊을까요?','이 기기의 문서는 그대로 남고, 드라이브에 있는 것도 지워지지 않습니다. 다만 다른 기기와 더 이상 맞추지 않습니다.',[{label:'취소',value:false},{label:'연결 끊기',value:true,cls:'btn-danger'}]); if(ok){ D.disconnect(); toast('연결을 끊었습니다'); } };
+    const now=el('button','btn btn-primary',S.err==='auth'?'다시 연결':'지금 동기화'); now.onclick=async()=>{ now.disabled=true; try{ if(S.err==='auth'||!D.tokenOk()) await D.reconnect(); else await D.sync(); }catch(e){ toast(e.message||'실패했습니다',3500); } openDrivePanel(); };
+    acts.append(off,now);
+  }
+  scrim.hidden=false;
+}
+if(window.DRIVE){ window.DRIVE.onChange(()=>{ driveLine(); renderInbox(); }); }
+
 /* ================= boot ================= */
 setTool(V.tool);
 (async()=>{
   await initCaps();
-  setStoreLine();
+  setStoreLine(); if(window.DRIVE) driveLine();
   loadDeco();
   await loadLibrary();
 })();

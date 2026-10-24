@@ -142,6 +142,8 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .sc-quad{position:absolute;pointer-events:none;overflow:visible}
 .sc-handles{position:absolute;pointer-events:none}
 .sc-handles span{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;border:3px solid #fff;background:rgba(124,92,224,.85);box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:auto;touch-action:none;cursor:grab}
+.sc-loupe{position:absolute;width:128px;height:128px;border-radius:50%;overflow:hidden;border:3px solid #fff;box-shadow:0 6px 20px rgba(0,0,0,.6);pointer-events:none;z-index:5}
+.sc-loupe canvas{width:100%;height:100%;display:block}
 .sc-hint{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:6px 12px;border-radius:999px;font-size:13px;white-space:nowrap}
 .sc-strip{flex:none;display:flex;gap:8px;overflow-x:auto;padding:10px;background:#1d1924;border-top:1px solid #2c2636;min-height:92px}
 .sc-strip:empty::before{content:"찍은 사진이 여기에 쌓입니다";color:#7d7390;font-size:13px;margin:auto}
@@ -678,7 +680,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
         <button class="ib" id="scLeft" title="앞으로">◀</button><button class="ib" id="scRight" title="뒤로">▶</button>
         <button class="ib" id="scDel" title="이 쪽 빼기"><svg class="i"><use href="#i-trash"/></svg></button>
       </div>
-      <div class="sc-stage" id="scStage"><canvas id="scCanvas"></canvas><svg class="sc-quad" id="scQuad" hidden></svg><div class="sc-handles" id="scHandles" hidden></div><div class="sc-hint" id="scHint" hidden></div></div>
+      <div class="sc-stage" id="scStage"><canvas id="scCanvas"></canvas><svg class="sc-quad" id="scQuad" hidden></svg><div class="sc-handles" id="scHandles" hidden></div><div class="sc-hint" id="scHint" hidden></div><div class="sc-loupe" id="scLoupe" hidden><canvas></canvas></div></div>
     </div>
     <div class="sc-strip" id="scStrip"></div>
   </div>
@@ -1125,8 +1127,36 @@ function scDetect(src,S0){
   if(!best||best.weakest<0.65) return null;
   return best.quad.map(([px,py])=>[Math.min(1,Math.max(0,px/w)),Math.min(1,Math.max(0,py/h))]);
 }
+// fit each side to the real edge on a larger picture: search across the side for the strongest colour step, then fit a line through those points
+function scRefine(src, quad, sides){
+  if(!quad) return quad; sides=sides||[0,1,2,3];
+  const M=1400, k=Math.min(1,M/Math.max(src.width,src.height)); const w=Math.round(src.width*k), h=Math.round(src.height*k);
+  let c=src._refC; if(!c||c.width!==w){ c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(src,0,0,w,h); src._refC=c; src._refD=c.getContext('2d').getImageData(0,0,w,h).data; }
+  const d=src._refD; const px=(x,y)=>{ x=Math.round(x); y=Math.round(y); if(x<0||y<0||x>=w||y>=h) return null; const i=(y*w+x)*4; return [d[i],d[i+1],d[i+2]]; };
+  const P=quad.map(([x,y])=>[x*w,y*h]); const diag=Math.hypot(w,h); const band=Math.max(6,Math.round(diag*0.018));
+  const lines=[];
+  for(let sd=0;sd<4;sd++){
+    const A=P[sd], B=P[(sd+1)%4]; const L=Math.hypot(B[0]-A[0],B[1]-A[1]); const ux=(B[0]-A[0])/L, uy=(B[1]-A[1])/L; const nx=-uy, ny=ux;
+    if(!sides.includes(sd)){ lines.push(null); continue; }
+    const pts=[];
+    for(let k2=0;k2<60;k2++){ const u=0.08+0.84*k2/59; const bx=A[0]+(B[0]-A[0])*u, by=A[1]+(B[1]-A[1])*u; let best=0, bt=0;
+      for(let t=-band;t<=band;t++){ const a=px(bx+nx*(t-2),by+ny*(t-2)), b2=px(bx+nx*(t+2),by+ny*(t+2)); if(!a||!b2) continue; const g=Math.max(Math.abs(a[0]-b2[0]),Math.abs(a[1]-b2[1]),Math.abs(a[2]-b2[2])); const wgt=g*(1-0.25*Math.abs(t)/band); if(wgt>best){ best=wgt; bt=t; } }
+      if(best>14) pts.push([bx+nx*bt,by+ny*bt]); }
+    if(pts.length<20){ lines.push(null); continue; }
+    // robust line fit: least squares, drop far points, refit
+    let cur=pts;
+    for(let it=0;it<3;it++){ const mx=cur.reduce((s2,p)=>s2+p[0],0)/cur.length, my=cur.reduce((s2,p)=>s2+p[1],0)/cur.length; let sxx=0,sxy=0,syy=0; for(const [x,y] of cur){ sxx+=(x-mx)**2; sxy+=(x-mx)*(y-my); syy+=(y-my)**2; }
+      const th=0.5*Math.atan2(2*sxy,sxx-syy); const dx=Math.cos(th), dy=Math.sin(th); const res=cur.map(([x,y])=>Math.abs(-(x-mx)*dy+(y-my)*dx)); const lim=Math.max(1.5,[...res].sort((a,b)=>a-b)[Math.floor(res.length*0.7)]*1.5);
+      const keep=cur.filter((p,i)=>res[i]<=lim); if(it===2||keep.length<15){ lines.push({mx,my,dx,dy,n:cur.length}); break; } cur=keep; }
+    const ln=lines[lines.length-1]; if(ln && Math.abs(ln.dx*ux+ln.dy*uy)<0.97) lines[lines.length-1]=null; // must stay roughly parallel to the side
+  }
+  const meet=(l1,l2)=>{ const det=l1.dx*l2.dy-l1.dy*l2.dx; if(Math.abs(det)<1e-6) return null; const t=((l2.mx-l1.mx)*l2.dy-(l2.my-l1.my)*l2.dx)/det; return [l1.mx+l1.dx*t,l1.my+l1.dy*t]; };
+  const sideLine=sd=>{ if(lines[sd]) return lines[sd]; const A=P[sd],B=P[(sd+1)%4]; const L=Math.hypot(B[0]-A[0],B[1]-A[1]); return {mx:A[0],my:A[1],dx:(B[0]-A[0])/L,dy:(B[1]-A[1])/L}; };
+  const out=P.map((p,i)=>{ const q=meet(sideLine((i+3)%4),sideLine(i)); if(!q||Math.hypot(q[0]-p[0],q[1]-p[1])>band*2) return p; return q; });
+  return out.map(([x,y])=>[Math.min(1,Math.max(0,x/w)),Math.min(1,Math.max(0,y/h))]);
+}
 function scAdd(canvas,hint){
-  let quad=null; try{ quad=scDetect(canvas); }catch(e){ console.warn('detect',e); } if(!quad && hint) quad=hint.map(p=>p.slice());
+  let quad=null; try{ quad=scDetect(canvas); }catch(e){ console.warn('detect',e); } if(!quad && hint) quad=hint.map(p=>p.slice()); if(quad){ try{ quad=scRefine(canvas,quad); }catch(e){ console.warn('refine',e); } }
   SC.pages.push({img:canvas, rot:0, quad, auto:!!quad, filt:'doc', finger:false, strokes:[]}); SC.cur=SC.pages.length-1; scStrip();
   if(quad && !SC.toldAuto){ SC.toldAuto=true; toast('종이 모서리를 찾아 반듯하게 폈습니다. 다르면 다듬기의 모서리 버튼으로 고치세요',4000); }
 }
@@ -1258,12 +1288,27 @@ function scLayoutHandles(){
 }
 function scDrag(s){
   s.addEventListener('pointerdown',e=>{ e.preventDefault(); s.setPointerCapture(e.pointerId); const pg=scCurrent(); const i=+s.dataset.i; const r=$('#scCanvas').getBoundingClientRect();
-    const mv=ev=>{ pg.quad[i]=[Math.min(1,Math.max(0,(ev.clientX-r.left)/r.width)),Math.min(1,Math.max(0,(ev.clientY-r.top)/r.height))]; scLayoutHandles(); };
-    const up=()=>{ s.removeEventListener('pointermove',mv); s.removeEventListener('pointerup',up); s.removeEventListener('pointercancel',up); };
+    const ox=pg.quad[i][0]*r.width+r.left-e.clientX, oy=pg.quad[i][1]*r.height+r.top-e.clientY; // keep the grab offset so the finger does not cover the corner
+    const mv=ev=>{ pg.quad[i]=[Math.min(1,Math.max(0,(ev.clientX+ox-r.left)/r.width)),Math.min(1,Math.max(0,(ev.clientY+oy-r.top)/r.height))]; scLayoutHandles(); scLoupe(pg.quad[i],r); };
+    scLoupe(pg.quad[i],r);
+    const up=()=>{ s.removeEventListener('pointermove',mv); s.removeEventListener('pointerup',up); s.removeEventListener('pointercancel',up); $('#scLoupe').hidden=true;
+      // snap the two sides that meet here onto the nearest real edge (only small corrections)
+      try{ const src=scRotated(pg); const q2=scRefine(src,pg.quad,[(i+3)%4,i]); const d=Math.hypot((q2[i][0]-pg.quad[i][0])*src.width,(q2[i][1]-pg.quad[i][1])*src.height); if(d<Math.hypot(src.width,src.height)*0.02) pg.quad=q2; }catch(e2){ console.warn(e2); }
+      scLayoutHandles(); };
     s.addEventListener('pointermove',mv); s.addEventListener('pointerup',up); s.addEventListener('pointercancel',up); });
 }
+// magnifier above the corner being dragged
+function scLoupe(p,r){
+  const lp=$('#scLoupe'); const cv=$('#scCanvas'); const R=64, Z=3; lp.hidden=false;
+  const st=$('#scStage').getBoundingClientRect(); const cx=r.left-st.left+p[0]*r.width, cy=r.top-st.top+p[1]*r.height;
+  lp.style.left=Math.max(R,Math.min(st.width-R,cx))-R+'px'; lp.style.top=(cy-R*2-36<0?cy+36:cy-R*2-36)+'px';
+  const c=lp.querySelector('canvas'); c.width=c.height=R*2*devicePixelRatio; const x=c.getContext('2d'); x.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  const sx=p[0]*cv.width, sy=p[1]*cv.height, k=cv.width/r.width; const sw=R*2/Z*k;
+  x.fillStyle='#222'; x.fillRect(0,0,R*2,R*2); x.imageSmoothingEnabled=true; x.drawImage(cv,sx-sw/2,sy-sw/2,sw,sw,0,0,R*2,R*2);
+  x.strokeStyle='#B9A5FF'; x.lineWidth=1.5; x.beginPath(); x.moveTo(R,R-14); x.lineTo(R,R+14); x.moveTo(R-14,R); x.lineTo(R+14,R); x.stroke();
+}
 addEventListener('resize',()=>{ if(!$('#scan').hidden){ scFit(); scLayoutHandles(); } });
-$('#scAuto').onclick=()=>{ const pg=scCurrent(); if(!pg) return; const q=scDetect(scRotated(pg)); if(q){ pg.quad=q; pg.auto=true; scLayoutHandles(); } else toast('종이 모서리를 찾지 못했습니다. 손으로 맞춰 주세요',3000); };
+$('#scAuto').onclick=()=>{ const pg=scCurrent(); if(!pg) return; let q=scDetect(scRotated(pg)); if(q) q=scRefine(scRotated(pg),q); if(q){ pg.quad=q; pg.auto=true; scLayoutHandles(); } else toast('종이 모서리를 찾지 못했습니다. 손으로 맞춰 주세요',3000); };
 $('#scFull').onclick=()=>{ const pg=scCurrent(); if(!pg) return; pg.quad=FULLQ.map(p=>p.slice()); pg.auto=false; scLayoutHandles(); };
 $('#scCorner').onclick=()=>{ SC.corner=!SC.corner; if(SC.corner) SC.brush=false; if(!SC.corner) scStrip(); scShowEdit(); };
 $('#scRot').onclick=()=>{ const pg=scCurrent(); if(!pg) return; pg.rot=(pg.rot+90)%360; pg.quad=pg.auto?scDetect(scRotated(pg)):null; pg.strokes=[]; scShowEdit(); scStrip(); };

@@ -462,7 +462,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 
     <nav class="menu" aria-label="시작하기">
       <label class="tile t1" for="fileIn"><span class="ti"><svg class="i"><use href="#i-open"/></svg></span><b>파일 열기</b><small>PDF · 한글 · 워드 · 엑셀 · PPT · 메모장</small></label>
-      <button class="tile t2" id="tScan"><span class="ti"><svg class="i"><use href="#i-cam"/></svg></span><b>사진으로 PDF</b><small>무음으로 찍거나 앨범에서 골라 PDF로</small></button>
+      <button class="tile t2" id="tScan"><span class="ti"><svg class="i"><use href="#i-cam"/></svg></span><b>사진으로 PDF</b><small>카메라로 찍거나 사진을 골라 PDF로</small></button>
       <div class="tile tphoto" id="decoCard" hidden aria-hidden="true"></div>
       <button class="tile t3" id="tNew"><span class="ti"><svg class="i"><use href="#i-new"/></svg></span><b>새 문서</b><small>빈 문서에 바로 쓰고 한글·워드로 저장</small></button>
     </nav>
@@ -655,7 +655,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   <div class="topbar">
     <button class="ib" id="scBack" title="닫기"><svg class="i"><use href="#i-back"/></svg><span class="hide-sm">닫기</span></button>
     <div class="doc-title">사진으로 PDF <span class="sc-count" id="scCount"></span></div>
-    <div class="seg" id="scSeg"><button id="scModeCam" aria-pressed="true">촬영</button><button id="scModeEdit" aria-pressed="false">다듬기</button></div>
+    <div class="seg" id="scSeg" hidden><button id="scModeCam" aria-pressed="true">촬영</button><button id="scModeEdit" aria-pressed="false">다듬기</button></div>
     <button class="btn btn-primary" id="scMake" disabled>PDF 만들기</button>
   </div>
   <div class="sc-body">
@@ -677,9 +677,9 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
       <div class="sc-tools" role="toolbar" aria-label="다듬기 도구">
         <button class="ib" id="scRot" title="돌리기"><svg class="i"><use href="#i-rot"/></svg><span>돌리기</span></button>
         <button class="ib" id="scCorner" title="모서리 맞추기" aria-pressed="false"><svg class="i"><use href="#i-crop"/></svg><span>모서리</span></button><button class="ib sc-cx" id="scAuto" hidden>자동 찾기</button><button class="ib sc-cx" id="scFull" hidden>사진 전체</button>
-        <div class="seg" id="scFilt"><button data-f="orig" aria-pressed="false">원본</button><button data-f="doc" aria-pressed="true">문서</button><button data-f="gray" aria-pressed="false">흑백</button></div>
-        <button class="ib" id="scFinger" title="가장자리 손가락 지우기" aria-pressed="false"><svg class="i"><use href="#i-hand2"/></svg><span>손가락 지우기</span></button>
-        <button class="ib" id="scBrush" title="문질러서 지우기" aria-pressed="false"><svg class="i"><use href="#i-brush"/></svg><span>지우개</span></button>
+        <div class="seg" id="scFilt"><button data-f="orig" aria-pressed="false">원본</button><button data-f="doc" aria-pressed="true">문서</button></div>
+        <button class="ib" hidden id="scFinger" title="가장자리 손가락 지우기" aria-pressed="false"><svg class="i"><use href="#i-hand2"/></svg><span>손가락 지우기</span></button>
+        <button class="ib" hidden id="scBrush" title="문질러서 지우기" aria-pressed="false"><svg class="i"><use href="#i-brush"/></svg><span>지우개</span></button>
         <button class="ib" id="scUndoBrush" title="지우개 되돌리기" hidden><svg class="i"><use href="#i-undo"/></svg></button>
         <span class="sep"></span>
         <button class="ib" id="scLeft" title="앞으로">◀</button><button class="ib" id="scRight" title="뒤로">▶</button>
@@ -1367,7 +1367,7 @@ function scRefine(src, quad, sides){
 function scAdd(canvas,hint){
   let quad=null; try{ quad=scDetect(canvas); }catch(e){ console.warn('detect',e); } if(!quad && hint) quad=hint.map(p=>p.slice()); if(quad){ try{ quad=scRefine(canvas,quad); }catch(e){ console.warn('refine',e); } }
   SC.pages.push({img:canvas, rot:0, quad, auto:!!quad, filt:'doc', finger:false, strokes:[]}); SC.cur=SC.pages.length-1; scStrip();
-  if(quad && !SC.toldAuto){ SC.toldAuto=true; toast('종이 모서리를 찾아 반듯하게 폈습니다. 다르면 다듬기의 모서리 버튼으로 고치세요',4000); }
+  if(quad && !SC.toldAuto){ SC.toldAuto=true; toast('종이 모서리를 찾아 반듯하게 폈습니다. 다르면 위의 모서리 버튼으로 고치세요',4000); }
 }
 $('#scShot').onclick=()=>{
   const v=$('#scVideo'); if(!v.videoWidth) return;
@@ -1397,23 +1397,13 @@ $('#scBack').onclick=async()=>{
   if(SC.pages.length){ const ok=await sheet('사진으로 PDF 만들기를 그만둘까요?','찍은 사진은 저장되지 않습니다.',[{label:'계속 만들기',value:false},{label:'그만두기',value:true,cls:'btn-danger'}]); if(!ok) return; }
   scStopCam(); SC.pages=[]; SC.cache.clear(); $('#scan').hidden=true; $('#home').hidden=false;
 };
-// photo → PDF: three ways in, best quality first
+// photo → PDF: take a picture with the camera, or bundle pictures a scanner app already made
 $('#tScan').onclick=()=>{
   const scrim=$('#scrim'); $('#sheetTitle').textContent='사진으로 PDF'; const body=$('#sheetBody'); body.replaceChildren();
   const list=el('div','set-list');
   const item=(icon,title,sub,fn)=>{ const b=el('button','set-item'); const t=el('span'); t.append(el('b',null,title),el('small',null,sub)); b.append(el('span','ic',icon),t,el('span','go','›')); b.onclick=fn; list.append(b); };
-  item('✨','아이패드 문서 스캔 (가장 선명)','파일 앱의 문서 스캔으로 찍고, 저장한 PDF를 여기서 엽니다',()=>{
-    $('#sheetTitle').textContent='아이패드 문서 스캔'; body.replaceChildren();
-    const ol=el('ol'); ol.style.cssText='margin:0;padding-left:20px;line-height:1.9;color:var(--ink)';
-    for(const t of ['아이패드 <b>파일</b> 앱을 엽니다','왼쪽 위 <b>⋯</b> 버튼(또는 폴더 빈 곳 길게 누르기) → <b>문서 스캔</b>','페이지를 연달아 찍고 <b>저장</b> (테두리와 펴기는 자동)','여기로 돌아와 아래 <b>스캔한 PDF 열기</b>를 누르고 방금 저장한 파일 고르기']){ const li=document.createElement('li'); li.innerHTML=t; ol.append(li); }
-    const tip=el('p',null,'애플이 만든 스캐너라 테두리 인식과 선명도가 가장 좋습니다. 열린 PDF에는 바로 필기하고 녹음할 수 있어요.'); tip.style.cssText='margin:10px 0 0;font-size:13px;color:var(--muted)';
-    body.append(ol,tip); const acts=$('#sheetActs'); acts.replaceChildren();
-    const back=el('button','btn btn-ghost','닫기'); back.onclick=()=>scrim.hidden=true;
-    const open=el('label','btn btn-primary','스캔한 PDF 열기'); open.htmlFor='fileIn'; open.onclick=()=>setTimeout(()=>scrim.hidden=true,300);
-    acts.append(back,open); });
-  item('📷','기본 카메라로 찍기 (선명)','아이패드 카메라로 찍어 여기서 다듬습니다 · 찰칵 소리가 날 수 있어요',()=>{ scrim.hidden=true; $('#scNative').click(); });
-  item('📚','스캔 앱 사진 묶기 (V플랫 등)','스캔 앱이 사진 앱에 저장한 사진을 여러 장 골라 그대로 PDF 하나로 만듭니다',()=>{ scrim.hidden=true; $('#bundleIn').click(); });
-  item('🤫','무음 촬영 (빠름)','여기서 바로 연달아 찍습니다 · 소리는 없지만 화질은 낮아요',()=>{ scrim.hidden=true; scOpen(); });
+  item('📷','카메라로 찍기','찍으면 테두리를 맞춰 PDF로 만듭니다 · 찰칵 소리가 날 수 있어요',()=>{ scrim.hidden=true; $('#scNative').click(); });
+  item('📚','사진 골라 묶기','V플랫 등으로 찍어 둔 사진을 여러 장 골라 그대로 PDF 하나로 만듭니다',()=>{ scrim.hidden=true; $('#bundleIn').click(); });
   body.append(list); const acts=$('#sheetActs'); acts.replaceChildren(); const close=el('button','btn btn-ghost','닫기'); close.onclick=()=>scrim.hidden=true; acts.append(close); scrim.hidden=false;
 };
 $('#scNative').onchange=async e=>{
@@ -1540,7 +1530,7 @@ function scShowEdit(){
   if(!pg){ scSetMode('cam'); return; }
   document.querySelectorAll('#scFilt button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.f===pg.filt)));
   $('#scFinger').setAttribute('aria-pressed',String(pg.finger)); $('#scCorner').setAttribute('aria-pressed',String(SC.corner)); $('#scBrush').setAttribute('aria-pressed',String(SC.brush));
-  $('#scUndoBrush').hidden=!pg.strokes.length;
+  $('#scUndoBrush').hidden=true;
   const src=SC.corner?fitCanvas(scRotated(pg),1600):scRender(pg,1600);
   cv.width=src.width; cv.height=src.height; cv.getContext('2d').drawImage(src,0,0);
   $('#scQuad').hidden=$('#scHandles').hidden=!SC.corner; $('#scAuto').hidden=$('#scFull').hidden=!SC.corner;

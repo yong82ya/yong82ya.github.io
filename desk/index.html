@@ -922,7 +922,7 @@ async function sync(){
     }
     ls.set('desk.drive.known',known); ls.set('desk.drive.rid',remoteIds);
     // 4) scans waiting in the inbox
-    S.inbox=await listAll(`'${F.inbox}' in parents and trashed=false and (mimeType='application/pdf' or mimeType contains 'image/')`,'id,name,mimeType,size,modifiedTime');
+    S.inbox=(await listAll(`'${F.inbox}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'`,'id,name,mimeType,size,modifiedTime')).filter(inboxKind);
     S.inbox.sort((a,b)=>(b.modifiedTime||'').localeCompare(a.modifiedTime||''));
     S.last=Date.now(); ls.set('desk.drive.last',S.last);
     if(pulled) await window.deskReload?.();
@@ -933,16 +933,27 @@ async function sync(){
   finally{ S.busy=false; emit(); }
   return {pulled,pushed};
 }
-// take scans from the inbox: PDFs open as documents, pictures are bundled into one PDF
+// what can come in through the inbox: PDFs, pictures, office files, and Google's own docs/slides/sheets (exported)
+const GEXP={'application/vnd.google-apps.document':['application/vnd.openxmlformats-officedocument.wordprocessingml.document','docx'],
+  'application/vnd.google-apps.presentation':['application/vnd.openxmlformats-officedocument.presentationml.presentation','pptx'],
+  'application/vnd.google-apps.spreadsheet':['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','xlsx']};
+const OFFICE=/\.(docx|hwpx|hwp|pptx|xlsx|xlsm|csv|txt|md)$/i;
+function inboxKind(f){ if(f.mimeType==='application/pdf'||/\.pdf$/i.test(f.name)) return 'pdf'; if((f.mimeType||'').startsWith('image/')) return 'img'; if(GEXP[f.mimeType]) return GEXP[f.mimeType][1]; const m=f.name.match(OFFICE); return m?m[1].toLowerCase():null; }
+async function fetchInboxFile(f){
+  const g=GEXP[f.mimeType];
+  if(g){ const b=await api('GET',`${API}/files/${f.id}/export?mimeType=${encodeURIComponent(g[0])}`).then(r=>r.blob()); const name=/\.[a-z]+$/i.test(f.name)&&f.name.toLowerCase().endsWith('.'+g[1])?f.name:f.name+'.'+g[1]; return new File([b],name,{type:g[0]}); }
+  return new File([await download(f.id)],f.name,{type:f.mimeType||''});
+}
+// take scans from the inbox: documents open as they are, pictures are bundled into one PDF
 async function importInbox(ids){
   if(S.importing) return; S.importing=true; emit();
   try{ await importInboxNow(ids); } finally{ S.importing=false; emit(); }
 }
 async function importInboxNow(ids){
   const F=await folders(); const pick=S.inbox.filter(f=>ids.includes(f.id)); if(!pick.length) return;
-  const pdfs=pick.filter(f=>f.mimeType==='application/pdf'), imgs=pick.filter(f=>f.mimeType!=='application/pdf');
+  const imgs=pick.filter(f=>inboxKind(f)==='img'), docs=pick.filter(f=>inboxKind(f)!=='img');
   const move=f=>api('PATCH',`${API}/files/${f.id}?addParents=${F.done}&removeParents=${F.inbox}&fields=id`,'{}',{'Content-Type':'application/json'}).catch(e=>console.warn('move',e));
-  for(const f of pdfs){ const b=await download(f.id); await window.deskOpenFile(new File([b],f.name,{type:'application/pdf'})); await move(f); }
+  for(const f of docs){ const file=await fetchInboxFile(f); await window.deskOpenFile(inboxKind(f)==='pdf'?new File([file],file.name,{type:'application/pdf'}):file); await move(f); }
   if(imgs.length){ const fl=[]; for(const f of imgs) fl.push(new File([await download(f.id)],f.name,{type:f.mimeType})); await window.deskBundle(fl); for(const f of imgs) await move(f); }
   S.inbox=S.inbox.filter(f=>!ids.includes(f.id)); emit();
 }
@@ -951,7 +962,7 @@ async function seed(){ if(ls.get('desk.drive.seeded',false)) return; try{ const 
 async function connect(){ await signIn(); await seed(); try{ const u=await J(await api('GET',`${API}/about?fields=user(emailAddress)`)); S.email=u.user?.emailAddress||''; ls.set('desk.drive.email',S.email); }catch{} emit(); await sync(); }
 function disconnect(){ try{ if(S.token) google?.accounts?.oauth2?.revoke?.(S.token,()=>{}); }catch{} S.token=null; ss.set('desk.drive.tok',null); ls.set('desk.drive.on',false); ls.set('desk.drive.folders',null); ls.set('desk.drive.seeded',false); S.folders=null; S.inbox=[]; emit(); }
 
-window.DRIVE={ connect, disconnect, sync, importInbox, fetchBlob, state:S, isOn:on, tokenOk, onChange(f){ S.listeners.add(f); return ()=>S.listeners.delete(f); },
+window.DRIVE={ connect, disconnect, sync, importInbox, fetchBlob, kindOf:inboxKind, state:S, isOn:on, tokenOk, onChange(f){ S.listeners.add(f); return ()=>S.listeners.delete(f); },
   reconnect:()=>signIn().then(()=>sync()) };
 // keep in step: shortly after changes, every couple of minutes, and when the app comes back to the front
 let dT=null; window.addEventListener('desk-dirty',()=>{ if(!on()||!tokenOk()) return; clearTimeout(dT); dT=setTimeout(sync,4000); });
@@ -4276,9 +4287,9 @@ function renderInbox(){
   const D=window.DRIVE, wrap=$('#inboxWrap'), box=$('#inboxList'); if(!D||!wrap) return;
   const items=D.isOn()?D.state.inbox:[]; wrap.hidden=!items.length; box.replaceChildren(); if(!items.length) return;
   $('#inboxCount').textContent=`${items.length}개`;
-  for(const f of items.slice(0,12)){ const b=el('button','rc'); b.append(el('span','f',f.mimeType==='application/pdf'?'PDF':'사진'), el('b',null,f.name.replace(/\.[^.]+$/,'')), el('small',null,f.modifiedTime?fmtDate(Date.parse(f.modifiedTime)):''));
+  for(const f of items.slice(0,12)){ const b=el('button','rc'); b.append(el('span','f',(k=>k==='img'?'사진':k.toUpperCase().slice(0,4))(D.kindOf(f))), el('b',null,f.name.replace(/\.[^.]+$/,'')), el('small',null,f.modifiedTime?fmtDate(Date.parse(f.modifiedTime)):''));
     b.title=f.name+' 가져와서 열기'; b.disabled=!!D.state.importing; b.onclick=async()=>{ if(D.state.importing) return; toast('드라이브에서 가져오는 중…',6000); try{ await D.importInbox([f.id]); }catch(e){ console.warn(e); toast('가져오지 못했습니다',3000); } }; box.append(b); }
-  const imgs=items.filter(f=>f.mimeType!=='application/pdf'); $('#inboxBundle').hidden=imgs.length<2; $('#inboxBundle').textContent=`사진 ${imgs.length}장 PDF 하나로 묶기`;
+  const imgs=items.filter(f=>D.kindOf(f)==='img'); $('#inboxBundle').hidden=imgs.length<2; $('#inboxBundle').textContent=`사진 ${imgs.length}장 PDF 하나로 묶기`;
   if(D.state.importing){ $('#inboxBundle').disabled=true; $('#inboxBundle').textContent='가져오는 중…'; } else $('#inboxBundle').disabled=false;
   $('#inboxBundle').onclick=async()=>{ if(D.state.importing) return; toast(`사진 ${imgs.length}장을 드라이브에서 가져오는 중…`,8000); try{ await D.importInbox(imgs.map(f=>f.id)); }catch(e){ console.warn(e); toast('가져오지 못했습니다',3000); } };
 }
@@ -4287,10 +4298,10 @@ function openDrivePanel(){
   const S=D.state; const box=el('div','set-list');
   const p=(t)=>{ const x=el('p',null,t); x.style.cssText='margin:0 0 8px;color:var(--ink);font-size:14px;line-height:1.6'; return x; };
   if(!D.isOn()){
-    box.append(p('연결하면 이 기기의 문서와 필기가 구글 드라이브의 "문서 작업대" 폴더에 저장되고, 노트북·아이패드·폰 어디서 열어도 이어집니다.'), p('폰에서 V플랫 등으로 찍은 스캔을 드라이브의 "문서 작업대/스캔함" 폴더로 보내면, 작업대 첫 화면에 바로 떠요.'));
+    box.append(p('연결하면 이 기기의 문서와 필기가 구글 드라이브의 "문서 작업대" 폴더에 저장되고, 노트북·아이패드·폰 어디서 열어도 이어집니다.'), p('폰에서 V플랫 등으로 찍은 스캔을 드라이브의 "문서 작업대/스캔함" 폴더로 보내면, 작업대 첫 화면에 바로 떠요. PDF·사진뿐 아니라 한글·워드·PPT·엑셀 파일과 구글 문서도 넣을 수 있어요.'));
     const note=el('p',null,'처음 연결할 때 구글이 "확인되지 않은 앱"이라고 경고할 수 있어요. 직접 만든 앱이라 그렇습니다. "고급" → "문서 작업대(으)로 이동"을 누르면 됩니다.'); note.style.cssText='margin:0;font-size:12px;color:var(--muted)'; box.append(note);
   } else {
-    box.append(p(`연결된 계정: ${S.email||'확인 중'}`), p(`마지막 동기화: ${agoText(S.last)}${S.busy?' · 지금 맞추는 중':''}`), p('스캔은 드라이브의 "문서 작업대/스캔함" 폴더에 넣으세요. 가져온 스캔은 "가져온 스캔" 폴더로 옮겨 둡니다.'));
+    box.append(p(`연결된 계정: ${S.email||'확인 중'}`), p(`마지막 동기화: ${agoText(S.last)}${S.busy?' · 지금 맞추는 중':''}`), p('작업대로 가져올 파일(스캔, PDF, 한글·워드·PPT·엑셀, 구글 문서)은 드라이브의 "문서 작업대/스캔함" 폴더에 넣으세요. 가져온 파일은 "가져온 스캔" 폴더로 옮겨 둡니다.'));
     if(S.err) box.append(p('최근 문제: '+(S.err==='auth'?'연결이 끊겨 다시 연결이 필요합니다':S.err)));
   }
   body.append(box);

@@ -119,6 +119,11 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .sc-body{flex:1;min-height:0;display:flex;flex-direction:column}
 .sc-cam,.sc-edit{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
 .sc-cam video{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}
+.sc-live{position:absolute;pointer-events:none;overflow:visible}
+.sc-live polygon{fill:rgba(124,92,224,.22);stroke:#B9A5FF;stroke-width:3;stroke-linejoin:round;transition:all .15s}
+.sc-live.steady polygon{fill:rgba(15,190,150,.22);stroke:#5BE0B5}
+.sc-tip{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:rgba(0,0,0,.6);padding:6px 12px;border-radius:999px;font-size:13px;white-space:nowrap;pointer-events:none}
+#scAutoShot[aria-pressed="true"] .sc-done-n{background:#5BE0B5;color:#123}
 .sc-flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .25s}
 .sc-flash.on{opacity:.7;transition:none}
 .sc-nocam{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#cfc7e0;text-align:center;padding:20px}
@@ -649,11 +654,14 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   <div class="sc-body">
     <div class="sc-cam" id="scCam">
       <video id="scVideo" playsinline muted autoplay></video>
+      <svg class="sc-live" id="scLive" hidden></svg>
       <div class="sc-flash" id="scFlash"></div>
+      <div class="sc-tip" id="scTip">종이를 화면 안에 넣으세요</div>
       <div class="sc-nocam" id="scNoCam" hidden><svg class="i"><use href="#i-cam"/></svg><p id="scNoCamText">카메라를 켤 수 없어 사진을 골라서 만듭니다.</p><label class="btn btn-primary" for="scPick">앨범에서 사진 고르기</label></div>
       <div class="sc-shutterbar">
         <label class="sc-side" for="scPick" title="앨범에서 고르기"><svg class="i"><use href="#i-open"/></svg><span>앨범</span></label>
         <button class="sc-shutter" id="scShot" title="찍기 (소리 없음)" aria-label="찍기"></button>
+        <button class="sc-side" id="scAutoShot" aria-pressed="false" title="테두리가 잡히고 손이 멈추면 저절로 찍기"><span class="sc-done-n">A</span><span>자동 찍기</span></button>
         <button class="sc-side" id="scDone" title="다 찍었으면 다듬기로"><span class="sc-done-n" id="scDoneN">0</span><span>다듬기</span></button>
       </div>
       <input type="file" id="scPick" accept="image/*" multiple class="sr">
@@ -1003,54 +1011,129 @@ async function scStartCam(){
   if(!navigator.mediaDevices?.getUserMedia){ scNoCam('이 화면에서는 카메라를 쓸 수 없어 사진을 골라서 만듭니다.'); return; }
   try{
     SC.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:3840},height:{ideal:2160}},audio:false});
-    v.srcObject=SC.stream; await v.play().catch(()=>{});
+    v.srcObject=SC.stream; await v.play().catch(()=>{}); SC.live=null; SC.steady=0; clearTimeout(SC.liveT); SC.liveT=setTimeout(scLiveTick,400);
   }catch(e){ scNoCam(e?.name==='NotAllowedError'?'카메라 사용을 허락하지 않아 사진을 골라서 만듭니다. 주소창의 설정에서 허락할 수 있습니다.':'카메라를 켤 수 없어 사진을 골라서 만듭니다.'); }
 }
 function scNoCam(t){ $('#scNoCamText').textContent=t; $('#scNoCam').hidden=false; $('#scShot').disabled=true; }
-function scStopCam(){ SC.stream?.getTracks().forEach(t=>t.stop()); SC.stream=null; $('#scVideo').srcObject=null; }
+function scStopCam(){ clearTimeout(SC.liveT); SC.liveT=null; SC.live=null; $('#scLive').setAttribute('hidden',''); SC.stream?.getTracks().forEach(t=>t.stop()); SC.stream=null; $('#scVideo').srcObject=null; }
+// live outline: look for the page in the camera picture a few times a second
+SC.live=null; SC.steady=0; SC.miss=0; SC.autoShot=false; SC.lastShotQ=null;
+try{ SC.autoShot=localStorage.getItem('desk.scan.auto')==='1'; }catch{}
+function scLiveTick(){
+  SC.liveT=null; if(SC.mode!=='cam' || !SC.stream || $('#scan').hidden) return;
+  const v=$('#scVideo'); const t0=performance.now();
+  if(v.videoWidth){
+    const k=Math.min(1,400/Math.max(v.videoWidth,v.videoHeight)); const c=SC.liveC||(SC.liveC=document.createElement('canvas'));
+    c.width=Math.round(v.videoWidth*k); c.height=Math.round(v.videoHeight*k); c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+    let q=null; try{ q=scDetect(c,320); }catch(e){ console.warn(e); }
+    if(q){ SC.miss=0; const d=SC.live?Math.max(...q.map((p,i)=>Math.hypot(p[0]-SC.live[i][0],p[1]-SC.live[i][1]))):1;
+      SC.steady=d<0.025?SC.steady+1:0; SC.live=SC.live&&d<0.08?q.map((p,i)=>[(p[0]+SC.live[i][0])/2,(p[1]+SC.live[i][1])/2]):q; }
+    else if(++SC.miss>=3){ SC.live=null; SC.steady=0; }
+    scDrawLive();
+    // hands-free: once the outline holds still, take the picture (not again until the page changes)
+    if(SC.autoShot && SC.live && SC.steady>=4){ const moved=!SC.lastShotQ || Math.max(...SC.live.map((p,i)=>Math.hypot(p[0]-SC.lastShotQ[i][0],p[1]-SC.lastShotQ[i][1])))>0.06;
+      if(moved && performance.now()-(SC.lastShotAt||0)>1500){ SC.lastShotQ=SC.live.map(p=>p.slice()); SC.lastShotAt=performance.now(); $('#scShot').click(); } }
+    if(!SC.live) SC.lastShotQ=null;
+  }
+  const spent=performance.now()-t0; SC.liveT=setTimeout(scLiveTick,Math.max(250,spent*2.5));
+}
+function scDrawLive(){
+  const svg=$('#scLive'), v=$('#scVideo'), tip=$('#scTip');
+  if(!SC.live || !v.videoWidth){ svg.setAttribute('hidden',''); tip.textContent='종이가 화면 안에 다 들어오게 찍어 주세요'; tip.hidden=false; return; }
+  const cw=v.clientWidth, ch=v.clientHeight, s=Math.min(cw/v.videoWidth,ch/v.videoHeight), dw=v.videoWidth*s, dh=v.videoHeight*s, ox=v.offsetLeft+(cw-dw)/2, oy=v.offsetTop+(ch-dh)/2;
+  svg.setAttribute('style',`left:${ox}px;top:${oy}px;width:${dw}px;height:${dh}px`); svg.setAttribute('viewBox',`0 0 ${dw} ${dh}`);
+  svg.innerHTML=`<polygon points="${SC.live.map(([x,y])=>`${x*dw},${y*dh}`).join(' ')}"/>`; svg.removeAttribute('hidden');
+  svg.classList.toggle('steady',SC.steady>=2); tip.textContent=SC.steady>=2?(SC.autoShot?'그대로 두세요 · 저절로 찍힙니다':'지금 찍으세요'):'테두리를 맞추는 중'; tip.hidden=false;
+}
+$('#scAutoShot').setAttribute('aria-pressed',String(SC.autoShot));
+$('#scAutoShot').onclick=()=>{ SC.autoShot=!SC.autoShot; $('#scAutoShot').setAttribute('aria-pressed',String(SC.autoShot)); try{ localStorage.setItem('desk.scan.auto',SC.autoShot?'1':'0'); }catch{} toast(SC.autoShot?'자동 찍기 켜짐 · 테두리가 초록색으로 멈추면 저절로 찍힙니다':'자동 찍기 꺼짐',3000); };
 function scSetMode(m){
   SC.mode=m; $('#scCam').hidden=m!=='cam'; $('#scEdit').hidden=m!=='edit';
   $('#scModeCam').setAttribute('aria-pressed',String(m==='cam')); $('#scModeEdit').setAttribute('aria-pressed',String(m==='edit'));
   if(m==='cam') scStartCam(); else { scStopCam(); if(SC.cur<0 && SC.pages.length) SC.cur=0; scShowEdit(); }
 }
 function fitCanvas(src, max){ const s=Math.min(1,max/Math.max(src.width,src.height)); const c=document.createElement('canvas'); c.width=Math.round(src.width*s); c.height=Math.round(src.height*s); c.getContext('2d').drawImage(src,0,0,c.width,c.height); return c; }
-// paper finder: the largest bright region in a small copy, its four extreme points become the corners
-function scDetect(src){
-  const S=360, k=Math.min(1,S/Math.max(src.width,src.height)); const w=Math.max(8,Math.round(src.width*k)), h=Math.max(8,Math.round(src.height*k));
-  const c=document.createElement('canvas'); c.width=w; c.height=h; const x=c.getContext('2d'); x.drawImage(src,0,0,w,h); const a=x.getImageData(0,0,w,h).data;
-  const L=new Uint8Array(w*h); const hist=new Uint32Array(256);
-  for(let i=0,j=0;i<a.length;i+=4,j++){ const r=a[i],g=a[i+1],b=a[i+2]; const mx=Math.max(r,g,b), mn=Math.min(r,g,b); const v=Math.round(0.299*r+0.587*g+0.114*b - (mx-mn)*0.35); L[j]=Math.max(0,Math.min(255,v)); hist[L[j]]++; }
-  // Otsu threshold
-  let sum=0; for(let t=0;t<256;t++) sum+=t*hist[t]; let sB=0,wB=0,best=0,th=128; const tot=w*h;
-  for(let t=0;t<256;t++){ wB+=hist[t]; if(!wB) continue; const wF=tot-wB; if(!wF) break; sB+=t*hist[t]; const mB=sB/wB, mF=(sum-sB)/wF; const bt=wB*wF*(mB-mF)*(mB-mF); if(bt>best){ best=bt; th=t; } }
-  const on=new Uint8Array(w*h); for(let j=0;j<w*h;j++) on[j]=L[j]>th?1:0;
-  // largest 4-connected bright component
-  const lab=new Int32Array(w*h).fill(-1); let bestId=-1, bestN=0; const q=new Int32Array(w*h);
-  for(let s=0;s<w*h;s++){ if(!on[s]||lab[s]>=0) continue; let qh=0,qt=0; q[qt++]=s; lab[s]=s; let n=0;
-    while(qh<qt){ const p=q[qh++]; n++; const px=p%w, py=(p/w)|0; if(px>0&&on[p-1]&&lab[p-1]<0){ lab[p-1]=s; q[qt++]=p-1; } if(px<w-1&&on[p+1]&&lab[p+1]<0){ lab[p+1]=s; q[qt++]=p+1; } if(py>0&&on[p-w]&&lab[p-w]<0){ lab[p-w]=s; q[qt++]=p-w; } if(py<h-1&&on[p+w]&&lab[p+w]<0){ lab[p+w]=s; q[qt++]=p+w; } }
-    if(n>bestN){ bestN=n; bestId=s; } }
-  if(bestN<tot*0.12) return null;
-  // the page fills the frame (bright on most of the border): nothing to crop
-  let edge=0, edgeN=0; for(let px=0;px<w;px++){ edgeN+=2; if(lab[px]===bestId) edge++; if(lab[(h-1)*w+px]===bestId) edge++; } for(let py=0;py<h;py++){ edgeN+=2; if(lab[py*w]===bestId) edge++; if(lab[py*w+w-1]===bestId) edge++; }
-  if(edge/edgeN>0.5) return null;
-  let tl=[0,0,Infinity], tr=[0,0,-Infinity], br=[0,0,-Infinity], bl=[0,0,Infinity];
-  for(let p=0;p<w*h;p++){ if(lab[p]!==bestId) continue; const px=p%w, py=(p/w)|0; const s1=px+py, s2=px-py; if(s1<tl[2]) tl=[px,py,s1]; if(s1>br[2]) br=[px,py,s1]; if(s2>tr[2]) tr=[px,py,s2]; if(s2<bl[2]) bl=[px,py,s2]; }
-  const quad=[tl,tr,br,bl].map(([px,py])=>[Math.min(1,Math.max(0,(px+0.5)/w)),Math.min(1,Math.max(0,(py+0.5)/h))]);
-  // sanity: convex, big enough
-  const area=Math.abs(quad.reduce((s,p,i)=>{ const n=quad[(i+1)%4]; return s+p[0]*n[1]-n[0]*p[1]; },0))/2; if(area<0.15) return null;
-  let sign=0; for(let i=0;i<4;i++){ const A=quad[i],B=quad[(i+1)%4],C=quad[(i+2)%4]; const z=(B[0]-A[0])*(C[1]-B[1])-(B[1]-A[1])*(C[0]-B[0]); if(!z) continue; if(!sign) sign=Math.sign(z); else if(Math.sign(z)!==sign) return null; }
-  if(quad.every((p,i)=>Math.abs(p[0]-FULLQ[i][0])<0.03&&Math.abs(p[1]-FULLQ[i][1])<0.03)) return null;
-  return quad;
+// Page finder by edges: Hough lines → best quadrilateral whose sides follow real edges with a colour change across them.
+function scDetect(src,S0){
+  const S=S0||400, k=Math.min(1,S/Math.max(src.width,src.height)); const w=Math.max(16,Math.round(src.width*k)), h=Math.max(16,Math.round(src.height*k));
+  const c=document.createElement('canvas'); c.width=w; c.height=h; const x=c.getContext('2d'); x.imageSmoothingQuality='high'; x.drawImage(src,0,0,w,h);
+  const a=x.getImageData(0,0,w,h).data; const n=w*h;
+  const R=new Float32Array(n),G=new Float32Array(n),B=new Float32Array(n);
+  for(let i=0,j=0;j<n;i+=4,j++){ R[j]=a[i]; G[j]=a[i+1]; B[j]=a[i+2]; }
+  const blur=ch=>{ const t=new Float32Array(n), o=new Float32Array(n);
+    for(let y=0;y<h;y++) for(let x2=0;x2<w;x2++){ let s=0,c2=0; for(let d=-2;d<=2;d++){ const xx=x2+d; if(xx>=0&&xx<w){ s+=ch[y*w+xx]; c2++; } } t[y*w+x2]=s/c2; }
+    for(let y=0;y<h;y++) for(let x2=0;x2<w;x2++){ let s=0,c2=0; for(let d=-2;d<=2;d++){ const yy=y+d; if(yy>=0&&yy<h){ s+=t[yy*w+x2]; c2++; } } o[y*w+x2]=s/c2; } return o; };
+  const r=blur(R), g=blur(G), b=blur(B);
+  // colour gradient (max over channels) with direction
+  const mag=new Float32Array(n), ang=new Float32Array(n);
+  for(let y=1;y<h-1;y++) for(let x2=1;x2<w-1;x2++){ const i=y*w+x2; let best=0,bx=0,by=0;
+    for(const ch of [r,g,b]){ const gx=(ch[i-w+1]+2*ch[i+1]+ch[i+w+1])-(ch[i-w-1]+2*ch[i-1]+ch[i+w-1]); const gy=(ch[i+w-1]+2*ch[i+w]+ch[i+w+1])-(ch[i-w-1]+2*ch[i-w]+ch[i-w+1]); const m=gx*gx+gy*gy; if(m>best){ best=m; bx=gx; by=gy; } }
+    mag[i]=Math.sqrt(best); ang[i]=Math.atan2(by,bx); }
+  // thin edges (non-maximum suppression) and keep the strongest ones
+  const edge=new Uint8Array(n); const vals=[];
+  for(let y=1;y<h-1;y++) for(let x2=1;x2<w-1;x2++){ const i=y*w+x2; const m=mag[i]; if(m<8) continue; const t=ang[i]; const dx=Math.round(Math.cos(t)), dy=Math.round(Math.sin(t)); if(m>=mag[i+dy*w+dx] && m>=mag[i-dy*w-dx]){ edge[i]=1; vals.push(m); } }
+  if(vals.length<50) return null;
+  vals.sort((p,q)=>p-q); const thr=Math.max(9,vals[Math.floor(vals.length*0.3)]);
+  for(let i=0;i<n;i++) if(edge[i] && mag[i]<thr) edge[i]=0;
+  const near=new Uint8Array(n); for(let y=1;y<h-1;y++) for(let x2=1;x2<w-1;x2++){ const i=y*w+x2; if(edge[i]) for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++) near[i+dy*w+dx]=1; }
+  // Hough transform, each edge votes only near its own gradient direction
+  const NT=180, RB=2, diag=Math.ceil(Math.hypot(w,h)/RB), NR=2*diag+1; const acc=new Float32Array(NT*NR);
+  const cs=new Float32Array(NT), sn=new Float32Array(NT); for(let t=0;t<NT;t++){ cs[t]=Math.cos(t*Math.PI/NT); sn[t]=Math.sin(t*Math.PI/NT); }
+  for(let y=1;y<h-1;y++) for(let x2=1;x2<w-1;x2++){ const i=y*w+x2; if(!edge[i]) continue; let t0=Math.round(((ang[i]%Math.PI)+Math.PI)%Math.PI*NT/Math.PI);
+    for(let dt=-6;dt<=6;dt++){ const t=((t0+dt)%NT+NT)%NT; const rr=Math.round((x2*cs[t]+y*sn[t])/RB)+diag; acc[t*NR+rr]+=1; } }
+  const peaks=[];
+  for(let t=0;t<NT;t++) for(let rr=1;rr<NR-1;rr++){ const v=acc[t*NR+rr]; if(v<Math.min(w,h)*0.1) continue; let mx=true;
+    for(let dt=-4;dt<=4&&mx;dt++) for(let dr=-3;dr<=3;dr++){ if(!dt&&!dr) continue; const tt=((t+dt)%NT+NT)%NT, r2=rr+dr; if(r2<0||r2>=NR) continue; const vv=acc[tt*NR+r2]; if(vv>v||(vv===v&&(dt<0||(dt===0&&dr<0)))){ mx=false; break; } }
+    if(mx) peaks.push({t,rho:(rr-diag)*RB,v}); }
+  peaks.sort((p,q)=>q.v-p.v);
+  const hor=[], ver=[]; for(const p of peaks){ const deg=p.t*180/NT; if(Math.abs(deg-90)<35){ if(hor.length<14) hor.push(p); } else if(deg<35||deg>145){ if(ver.length<14) ver.push(p); } }
+  if(hor.length<2||ver.length<2) return null;
+  const inter=(p,q)=>{ const a1=cs[p.t],b1=sn[p.t],a2=cs[q.t],b2=sn[q.t]; const det=a1*b2-a2*b1; if(Math.abs(det)<1e-6) return null; return [(p.rho*b2-q.rho*b1)/det,(a1*q.rho-a2*p.rho)/det]; };
+  const col=(px,py)=>{ const xx=Math.min(w-1,Math.max(0,Math.round(px))), yy=Math.min(h-1,Math.max(0,Math.round(py))); const i=yy*w+xx; return [r[i],g[i],b[i]]; };
+  function side(P,Q,cx,cy){ // edge support along P→Q and colour change across it
+    const L=Math.hypot(Q[0]-P[0],Q[1]-P[1]); const steps=Math.max(8,Math.round(L)); let on=0, cnt=0, diff=0, dn=0, hit=0;
+    let nx=-(Q[1]-P[1])/L, ny=(Q[0]-P[0])/L; const mx=(P[0]+Q[0])/2, my=(P[1]+Q[1])/2; if((cx-mx)*nx+(cy-my)*ny<0){ nx=-nx; ny=-ny; } // normal points inside
+    for(let s=0;s<=steps;s++){ const u=s/steps; if(u<0.06||u>0.94) continue; const px=P[0]+(Q[0]-P[0])*u, py=P[1]+(Q[1]-P[1])*u; if(px<1||py<1||px>w-2||py>h-2) continue; cnt++;
+      if(near[Math.round(py)*w+Math.round(px)]) on++;
+      if(s%2===0){ const ci=col(px+nx*4,py+ny*4), co=col(px-nx*4,py-ny*4); const dd=Math.hypot(ci[0]-co[0],ci[1]-co[1],ci[2]-co[2]); diff+=dd; dn++; if(dd>10) hit++; } }
+    if(cnt<steps*0.5) return {sup:0,con:0,cov:0};
+    return {sup:on/cnt, con:dn?diff/dn:0, cov:dn?hit/dn:0};
+  }
+  let best=null;
+  for(let i=0;i<hor.length;i++) for(let j=i+1;j<hor.length;j++){
+    let h1=hor[i], h2=hor[j];
+    for(let p=0;p<ver.length;p++) for(let q=p+1;q<ver.length;q++){
+      const v1=ver[p], v2=ver[q];
+      const pts=[inter(h1,v1),inter(h1,v2),inter(h2,v2),inter(h2,v1)]; if(pts.some(z=>!z)) continue;
+      if(pts.some(([px,py])=>px<-w*0.04||py<-h*0.04||px>w*1.04||py>h*1.04)) continue;
+      // order: top-left, top-right, bottom-right, bottom-left
+      const cx=pts.reduce((s,z)=>s+z[0],0)/4, cy=pts.reduce((s,z)=>s+z[1],0)/4;
+      const o=pts.slice().sort((A,Bq)=>Math.atan2(A[1]-cy,A[0]-cx)-Math.atan2(Bq[1]-cy,Bq[0]-cx)); // clockwise from left-ish
+      let st=0; for(let z=1;z<4;z++) if(o[z][0]+o[z][1]<o[st][0]+o[st][1]) st=z; const quad=[0,1,2,3].map(z=>o[(st+z)%4]);
+      const area=Math.abs(quad.reduce((s,P,z)=>{ const Q=quad[(z+1)%4]; return s+P[0]*Q[1]-Q[0]*P[1]; },0))/2/(w*h);
+      if(area<0.12||area>0.97) continue;
+      let sign=0, convex=true; for(let z=0;z<4;z++){ const A=quad[z],Bq=quad[(z+1)%4],C=quad[(z+2)%4]; const zz=(Bq[0]-A[0])*(C[1]-Bq[1])-(Bq[1]-A[1])*(C[0]-Bq[0]); const sg=Math.sign(zz); if(!sign) sign=sg; else if(sg!==sign){ convex=false; break; } } if(!convex) continue;
+      // opposite sides should be of similar length (perspective allows some difference)
+      const len=z=>Math.hypot(quad[(z+1)%4][0]-quad[z][0],quad[(z+1)%4][1]-quad[z][1]); if(Math.min(len(0),len(2))/Math.max(len(0),len(2))<0.6||Math.min(len(1),len(3))/Math.max(len(1),len(3))<0.6) continue;
+      let score=0, weakest=1, ok=true;
+      for(let z=0;z<4;z++){ const s=side(quad[z],quad[(z+1)%4],cx,cy); const sc=0.4*s.sup+s.cov; if(s.sup<0.15||s.cov<0.55){ ok=false; break; } score+=sc; weakest=Math.min(weakest,sc); }
+      if(!ok) continue;
+      score+=weakest-area*0.6;
+      if(!best||score>best.score) best={score,quad,area,weakest};
+    }
+  }
+  if(!best||best.weakest<0.65) return null;
+  return best.quad.map(([px,py])=>[Math.min(1,Math.max(0,px/w)),Math.min(1,Math.max(0,py/h))]);
 }
-function scAdd(canvas){
-  let quad=null; try{ quad=scDetect(canvas); }catch(e){ console.warn('detect',e); }
+function scAdd(canvas,hint){
+  let quad=null; try{ quad=scDetect(canvas); }catch(e){ console.warn('detect',e); } if(!quad && hint) quad=hint.map(p=>p.slice());
   SC.pages.push({img:canvas, rot:0, quad, auto:!!quad, filt:'doc', finger:false, strokes:[]}); SC.cur=SC.pages.length-1; scStrip();
   if(quad && !SC.toldAuto){ SC.toldAuto=true; toast('종이 모서리를 찾아 반듯하게 폈습니다. 다르면 다듬기의 모서리 버튼으로 고치세요',4000); }
 }
 $('#scShot').onclick=()=>{
   const v=$('#scVideo'); if(!v.videoWidth) return;
   const c=document.createElement('canvas'); c.width=v.videoWidth; c.height=v.videoHeight; c.getContext('2d').drawImage(v,0,0);
-  scAdd(fitCanvas(c,SC_MAX)); c.width=c.height=0;
+  scAdd(fitCanvas(c,SC_MAX),SC.live); c.width=c.height=0;
   const f=$('#scFlash'); f.classList.add('on'); requestAnimationFrame(()=>requestAnimationFrame(()=>f.classList.remove('on')));
 };
 $('#scPick').onchange=async e=>{

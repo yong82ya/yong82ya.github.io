@@ -2849,7 +2849,10 @@ async function hwpToHtml(bytes){
   const fh=cf.get('FileHeader'); if(!fh || td.decode(fh.subarray(0,17))!=='HWP Document File') throw new Error('not-hwp5');
   const props=new DataView(fh.buffer,fh.byteOffset).getUint32(36,true);
   if(props&2) throw new Error('hwp-password'); if(props&4) throw new Error('hwp-distribution');
-  const unz=async b=>props&1?streamBytes(b,new DecompressionStream('deflate-raw')):b;
+  // HWP streams often carry a few bytes after the end of the deflate data; browsers reject that, so keep what came out before the error
+  const unz=async b=>{ if(!(props&1)) return b; const ds=new DecompressionStream('deflate-raw'); const w=ds.writable.getWriter(); w.write(b).catch(()=>{}); w.close().catch(()=>{});
+    const r=ds.readable.getReader(); const parts=[]; let n=0; try{ for(;;){ const {done,value}=await r.read(); if(done) break; parts.push(value); n+=value.length; } }catch(e){ if(!n) throw e; }
+    const out=new Uint8Array(n); let o=0; for(const p of parts){ out.set(p,o); o+=p.length; } return out; };
   const T=0x10, CHAR_SHAPE=T+21, PARA_SHAPE=T+25, PARA_HEADER=T+50, PARA_TEXT=T+51, PARA_CHAR_SHAPE=T+52, CTRL_HEADER=T+55, LIST_HEADER=T+56, TABLE=T+61;
   // shapes from DocInfo
   const cs=[], ps=[];

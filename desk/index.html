@@ -914,6 +914,10 @@ async function sync(){
 }
 // take scans from the inbox: PDFs open as documents, pictures are bundled into one PDF
 async function importInbox(ids){
+  if(S.importing) return; S.importing=true; emit();
+  try{ await importInboxNow(ids); } finally{ S.importing=false; emit(); }
+}
+async function importInboxNow(ids){
   const F=await folders(); const pick=S.inbox.filter(f=>ids.includes(f.id)); if(!pick.length) return;
   const pdfs=pick.filter(f=>f.mimeType==='application/pdf'), imgs=pick.filter(f=>f.mimeType!=='application/pdf');
   const move=f=>api('PATCH',`${API}/files/${f.id}?addParents=${F.done}&removeParents=${F.inbox}&fields=id`,'{}',{'Content-Type':'application/json'}).catch(e=>console.warn('move',e));
@@ -929,8 +933,11 @@ function disconnect(){ try{ if(S.token) google?.accounts?.oauth2?.revoke?.(S.tok
 window.DRIVE={ connect, disconnect, sync, importInbox, fetchBlob, state:S, isOn:on, tokenOk, onChange(f){ S.listeners.add(f); return ()=>S.listeners.delete(f); },
   reconnect:()=>signIn().then(()=>sync()) };
 // keep in step: shortly after changes, every couple of minutes, and when the app comes back to the front
-let dT=null; window.addEventListener('desk-dirty',()=>{ if(!on()||!tokenOk()) return; clearTimeout(dT); dT=setTimeout(sync,8000); });
-setInterval(()=>{ if(on()&&tokenOk()&&!document.hidden) sync(); },120000);
+let dT=null; window.addEventListener('desk-dirty',()=>{ if(!on()||!tokenOk()) return; clearTimeout(dT); dT=setTimeout(sync,4000); });
+// every 30 seconds on the home screen, every 90 seconds while a document is open
+let lastAuto=0; setInterval(()=>{ if(!on()||!tokenOk()||document.hidden) return; const home=!document.getElementById('home')?.hidden; if(Date.now()-lastAuto < (home?30000:90000)) return; lastAuto=Date.now(); sync(); },5000);
+// coming back to the home screen (closing a document) checks right away
+window.addEventListener('load',()=>{ const h=document.getElementById('home'); if(!h) return; new MutationObserver(()=>{ if(!h.hidden && on() && tokenOk()){ lastAuto=Date.now(); setTimeout(sync,600); } }).observe(h,{attributes:true,attributeFilter:['hidden']}); });
 document.addEventListener('visibilitychange',()=>{ if(on()&&tokenOk()) sync(); });
 window.addEventListener('load',()=>setTimeout(()=>{ if(on()) { if(tokenOk()) sync(); else { S.err='auth'; emit(); } } },1500));
 })();
@@ -1101,7 +1108,12 @@ const isImg=f=>/^image\//.test(f.type)||/\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i
 function intake(files){ files=[...files]; if(!files.length) return; const imgs=files.filter(isImg); if(imgs.length) return bundleImages(imgs); openLocalFile(files[0]); if(files.length>1) toast('파일은 한 번에 하나씩 열립니다. 사진은 여러 장을 한꺼번에 고르면 PDF 하나로 묶입니다',4000); }
 $('#fileIn').addEventListener('change', e=>{ const fs=[...e.target.files]; e.target.value=''; intake(fs); });
 $('#bundleIn').addEventListener('change', e=>{ const fs=[...e.target.files]; e.target.value=''; if(fs.length) bundleImages(fs); });
+let bundling=false;
 async function bundleImages(files){
+  if(bundling){ toast('지금 PDF로 묶는 중입니다. 잠시만 기다려 주세요'); return; } bundling=true;
+  try{ await bundleImagesNow(files); } finally{ bundling=false; }
+}
+async function bundleImagesNow(files){
   showBusy(`사진 ${files.length}장을 PDF로 묶는 중`);
   try{
     const PDFLib=await loadPdfLib(); const doc=await PDFLib.PDFDocument.create(); let n=0;
@@ -4158,16 +4170,17 @@ function driveLine(){
   const S=D.state;
   if(S.err==='auth'){ dot.className='dot warn'; txt.textContent='구글 드라이브 연결이 잠시 끊겼습니다 · 여기를 눌러 다시 연결'; line.style.cursor='pointer'; line.onclick=()=>D.reconnect().catch(e=>toast(e.message||'연결하지 못했습니다',3500)); return; }
   if(S.err){ dot.className='dot warn'; txt.textContent='동기화 문제: '+S.err.slice(0,80)+' · 여기를 눌러 다시 시도'; line.style.cursor='pointer'; line.onclick=()=>D.sync(); return; }
-  dot.className='dot ok'; txt.textContent=S.busy?'구글 드라이브와 맞추는 중…':`구글 드라이브와 동기화됨 · ${agoText(S.last)}`;
+  dot.className='dot ok'; txt.textContent=S.busy?'구글 드라이브와 맞추는 중…':`구글 드라이브와 동기화됨 · ${agoText(S.last)} · 눌러서 지금 맞추기`; line.style.cursor='pointer'; line.onclick=()=>D.sync();
 }
 function renderInbox(){
   const D=window.DRIVE, wrap=$('#inboxWrap'), box=$('#inboxList'); if(!D||!wrap) return;
   const items=D.isOn()?D.state.inbox:[]; wrap.hidden=!items.length; box.replaceChildren(); if(!items.length) return;
   $('#inboxCount').textContent=`${items.length}개`;
   for(const f of items.slice(0,12)){ const b=el('button','rc'); b.append(el('span','f',f.mimeType==='application/pdf'?'PDF':'사진'), el('b',null,f.name.replace(/\.[^.]+$/,'')), el('small',null,f.modifiedTime?fmtDate(Date.parse(f.modifiedTime)):''));
-    b.title=f.name+' 가져와서 열기'; b.onclick=async()=>{ b.disabled=true; try{ await D.importInbox([f.id]); }catch(e){ console.warn(e); toast('가져오지 못했습니다',3000); b.disabled=false; } }; box.append(b); }
+    b.title=f.name+' 가져와서 열기'; b.disabled=!!D.state.importing; b.onclick=async()=>{ if(D.state.importing) return; toast('드라이브에서 가져오는 중…',6000); try{ await D.importInbox([f.id]); }catch(e){ console.warn(e); toast('가져오지 못했습니다',3000); } }; box.append(b); }
   const imgs=items.filter(f=>f.mimeType!=='application/pdf'); $('#inboxBundle').hidden=imgs.length<2; $('#inboxBundle').textContent=`사진 ${imgs.length}장 PDF 하나로 묶기`;
-  $('#inboxBundle').onclick=async()=>{ try{ await D.importInbox(imgs.map(f=>f.id)); }catch(e){ console.warn(e); toast('가져오지 못했습니다',3000); } };
+  if(D.state.importing){ $('#inboxBundle').disabled=true; $('#inboxBundle').textContent='가져오는 중…'; } else $('#inboxBundle').disabled=false;
+  $('#inboxBundle').onclick=async()=>{ if(D.state.importing) return; toast(`사진 ${imgs.length}장을 드라이브에서 가져오는 중…`,8000); try{ await D.importInbox(imgs.map(f=>f.id)); }catch(e){ console.warn(e); toast('가져오지 못했습니다',3000); } };
 }
 function openDrivePanel(){
   const D=window.DRIVE; const scrim=$('#scrim'); $('#sheetTitle').textContent='구글 드라이브 동기화'; const body=$('#sheetBody'); body.replaceChildren();

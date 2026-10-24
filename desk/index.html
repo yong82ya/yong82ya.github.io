@@ -457,7 +457,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
         <p>PDF는 펜과 형광펜으로 필기하고, 한글·워드·메모장 문서는 읽고 고치고, 엑셀은 표로 봅니다. 여기서 바로 녹음하면 필기와 함께 다시 볼 수 있고, 내보낸 파일은 바로 공유할 수 있습니다.</p>
       </div>
       <button class="btn btn-ghost deco-btn" id="setBtn" title="설정"><svg class="i"><use href="#i-gear"/></svg>설정</button>
-      <input id="fileIn" type="file" accept=".pdf,.pptx,.hwpx,.docx,.txt,.md,.xlsx,.xlsm,.csv,.hwp,application/pdf" class="sr">
+      <input id="fileIn" type="file" multiple accept=".pdf,.pptx,.hwpx,.docx,.txt,.md,.xlsx,.xlsm,.csv,.hwp,application/pdf,image/*" class="sr"><input id="bundleIn" type="file" multiple accept="image/*" class="sr">
     </header>
 
     <nav class="menu" aria-label="시작하기">
@@ -925,11 +925,35 @@ async function askDelete(m){
 }
 
 /* file intake */
-$('#fileIn').addEventListener('change', e=>{ const f=e.target.files[0]; e.target.value=''; if(f) openLocalFile(f); });
+// several pictures at once (from a scanner app's photo album) become one PDF; anything else opens as before
+const isImg=f=>/^image\//.test(f.type)||/\.(jpe?g|png|heic|heif|webp|gif|bmp)$/i.test(f.name);
+function intake(files){ files=[...files]; if(!files.length) return; const imgs=files.filter(isImg); if(imgs.length) return bundleImages(imgs); openLocalFile(files[0]); if(files.length>1) toast('파일은 한 번에 하나씩 열립니다. 사진은 여러 장을 한꺼번에 고르면 PDF 하나로 묶입니다',4000); }
+$('#fileIn').addEventListener('change', e=>{ const fs=[...e.target.files]; e.target.value=''; intake(fs); });
+$('#bundleIn').addEventListener('change', e=>{ const fs=[...e.target.files]; e.target.value=''; if(fs.length) bundleImages(fs); });
+async function bundleImages(files){
+  showBusy(`사진 ${files.length}장을 PDF로 묶는 중`);
+  try{
+    const PDFLib=await loadPdfLib(); const doc=await PDFLib.PDFDocument.create(); let n=0;
+    for(let i=0;i<files.length;i++){
+      $('#busyText').textContent=`사진을 PDF로 묶는 중 ${i+1}/${files.length}`;
+      const f=files[i]; let bmp=null;
+      try{ bmp=await createImageBitmap(f,{imageOrientation:'from-image'}); }catch{ try{ bmp=await createImageBitmap(f); }catch{} }
+      if(!bmp){ try{ const url=URL.createObjectURL(f); const im=new Image(); await new Promise((r,j)=>{ im.onload=r; im.onerror=j; im.src=url; }); bmp=im; setTimeout(()=>URL.revokeObjectURL(url),1000); }catch{ toast(`${f.name}은(는) 열 수 없는 그림입니다`,3000); continue; } }
+      // scanner apps already cropped and cleaned the page: keep it as is, only cap the size
+      const c=fitCanvas(bmp,3500); bmp.close?.();
+      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.92)); const img=await doc.embedJpg(new Uint8Array(await blob.arrayBuffer()));
+      const W=595.28, H=W*c.height/c.width; doc.addPage([W,H]).drawImage(img,{x:0,y:0,width:W,height:H}); c.width=c.height=0; n++;
+    }
+    if(!n){ hideBusy(); $('#viewer').hidden=true; $('#home').hidden=false; return; }
+    const d=new Date(), p=x=>String(x).padStart(2,'0');
+    const file=new File([await doc.save()],`스캔 묶음 ${d.getMonth()+1}-${d.getDate()} ${p(d.getHours())}${p(d.getMinutes())}.pdf`,{type:'application/pdf'});
+    hideBusy(); await openLocalFile(file); toast(`사진 ${n}장을 PDF 하나로 묶었습니다`,3000);
+  }catch(e){ console.warn(e); hideBusy(); $('#viewer').hidden=true; $('#home').hidden=false; toast('PDF로 묶지 못했습니다. 사진 수를 줄여 다시 해 주세요.',4000); }
+}
 const drop=$('#drop');
 ['dragenter','dragover'].forEach(t=>document.addEventListener(t,e=>{ if($('#home').hidden) return; e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave','drop'].forEach(t=>document.addEventListener(t,e=>{ if(t==='dragleave' && e.relatedTarget) return; drop.classList.remove('over'); }));
-document.addEventListener('drop',e=>{ if($('#home').hidden) return; e.preventDefault(); const f=[...(e.dataTransfer?.files||[])][0]; if(f) openLocalFile(f); });
+document.addEventListener('drop',e=>{ if($('#home').hidden) return; e.preventDefault(); intake(e.dataTransfer?.files||[]); });
 
 /* ================= home decoration (the viewer picks their own photo) ================= */
 const DECO={url:null, banner:true, bg:false, card:false, blur:6, dim:55, pos:50};
@@ -1204,6 +1228,7 @@ $('#tScan').onclick=()=>{
     const open=el('label','btn btn-primary','스캔한 PDF 열기'); open.htmlFor='fileIn'; open.onclick=()=>setTimeout(()=>scrim.hidden=true,300);
     acts.append(back,open); });
   item('📷','기본 카메라로 찍기 (선명)','아이패드 카메라로 찍어 여기서 다듬습니다 · 찰칵 소리가 날 수 있어요',()=>{ scrim.hidden=true; $('#scNative').click(); });
+  item('📚','스캔 앱 사진 묶기 (V플랫 등)','스캔 앱이 사진 앱에 저장한 사진을 여러 장 골라 그대로 PDF 하나로 만듭니다',()=>{ scrim.hidden=true; $('#bundleIn').click(); });
   item('🤫','무음 촬영 (빠름)','여기서 바로 연달아 찍습니다 · 소리는 없지만 화질은 낮아요',()=>{ scrim.hidden=true; scOpen(); });
   body.append(list); const acts=$('#sheetActs'); acts.replaceChildren(); const close=el('button','btn btn-ghost','닫기'); close.onclick=()=>scrim.hidden=true; acts.append(close); scrim.hidden=false;
 };
@@ -1263,10 +1288,23 @@ function scFilter(c, filt, bg){
   x.putImageData(id,0,0);
 }
 // --- fingers: skin-coloured cells touching the page edge, painted with the paper colour
+// paper colour: brightest-half median of the middle of the page (ink and shadows excluded)
+function scPaperRef(c,a){
+  const W=c.width,H=c.height, v=[]; for(let y=Math.round(H*.2);y<H*.8;y+=Math.max(2,H/120|0)) for(let x=Math.round(W*.2);x<W*.8;x+=Math.max(2,W/120|0)){ const i=(y*W+x)*4; v.push([a[i],a[i+1],a[i+2],a[i]+a[i+1]+a[i+2]]); }
+  v.sort((p,q)=>q[3]-p[3]); const top=v.slice(0,Math.max(1,v.length>>1)); const md=k=>{ const t=top.map(z=>z[k]).sort((p,q)=>p-q); return t[t.length>>1]; };
+  const R=md(0),G=md(1),B=md(2); return {R,G,B,Cr:128+0.5*R-0.418688*G-0.081312*B,Cb:128-0.168736*R-0.331264*G+0.5*B,Y:0.299*R+0.587*G+0.114*B};
+}
+// skin: clearly redder than this page's paper, not just warm-lit paper; ink (dark) never counts
+function scIsSkin(R,G,B,P,loose){
+  const Cb=128-0.168736*R-0.331264*G+0.5*B, Cr=128+0.5*R-0.418688*G-0.081312*B, Y=0.299*R+0.587*G+0.114*B;
+  const m=loose?0.7:1;
+  return Y>60 && R>=G && R>B && Cr>=P.Cr+9*m && Cr<=185 && Cb<=P.Cb-4*m && Cb>=65 && (R-B)>=(P.R-P.B)+22*m;
+}
 function scFingerMask(c){
   const cs=Math.max(6,Math.round(Math.max(c.width,c.height)/140)); const gw=Math.ceil(c.width/cs), gh=Math.ceil(c.height/cs);
   const a=c.getContext('2d').getImageData(0,0,c.width,c.height).data; const skin=new Uint8Array(gw*gh);
-  for(let gy=0;gy<gh;gy++) for(let gx=0;gx<gw;gx++){ let n=0,s=0; for(let y=gy*cs;y<Math.min(c.height,(gy+1)*cs);y+=2) for(let x=gx*cs;x<Math.min(c.width,(gx+1)*cs);x+=2){ const i=(y*c.width+x)*4, R=a[i],G=a[i+1],B=a[i+2]; const Cb=128-0.168736*R-0.331264*G+0.5*B, Cr=128+0.5*R-0.418688*G-0.081312*B, Y=0.299*R+0.587*G+0.114*B; n++; if(Cb>=77&&Cb<=127&&Cr>=137&&Cr<=175&&Y>50&&R>G&&R>B&&R-B>15) s++; } skin[gy*gw+gx]=s/n>0.45?1:0; }
+  const P=scPaperRef(c,a); c._paperRef=P;
+  for(let gy=0;gy<gh;gy++) for(let gx=0;gx<gw;gx++){ let n=0,s=0; for(let y=gy*cs;y<Math.min(c.height,(gy+1)*cs);y+=2) for(let x=gx*cs;x<Math.min(c.width,(gx+1)*cs);x+=2){ const i=(y*c.width+x)*4; n++; if(scIsSkin(a[i],a[i+1],a[i+2],P,0)) s++; } skin[gy*gw+gx]=s/n>0.5?1:0; }
   // keep only skin regions connected to the edge band
   const band=Math.max(2,Math.round(Math.min(gw,gh)*0.18)); const keep=new Uint8Array(gw*gh); const q=[];
   for(let gy=0;gy<gh;gy++) for(let gx=0;gx<gw;gx++){ const edge=gx===0||gy===0||gx===gw-1||gy===gh-1; if(edge && skin[gy*gw+gx]){ keep[gy*gw+gx]=1; q.push(gy*gw+gx); } }
@@ -1282,9 +1320,11 @@ function scInpaintFingers(c){
   const zone=new Uint8Array(W*H); for(const [rx,ry,rw,rh] of rects){ for(let y=Math.max(0,ry);y<Math.min(H,ry+rh);y++) for(let xx=Math.max(0,rx);xx<Math.min(W,rx+rw);xx++) zone[y*W+xx]=1; }
   // skin test per pixel inside the zone (a little looser than the cell test), then grow to cover the soft edge and shadow
   const m=new Uint8Array(W*H);
-  for(let i=0,j=0;j<W*H;i+=4,j++){ if(!zone[j]) continue; const R=a[i],G=a[i+1],B=a[i+2]; const Cb=128-0.168736*R-0.331264*G+0.5*B, Cr=128+0.5*R-0.418688*G-0.081312*B; if(Cr>=133&&Cr<=180&&Cb>=70&&Cb<=130&&R>B+8&&R>=G) m[j]=1; }
+  const P=c._paperRef||scPaperRef(c,a); const dark=j=>{ const i=j*4; return 0.299*a[i]+0.587*a[i+1]+0.114*a[i+2] < P.Y-55; };
+  for(let i=0,j=0;j<W*H;i+=4,j++){ if(!zone[j]) continue; if(scIsSkin(a[i],a[i+1],a[i+2],P,1)) m[j]=1; }
+  { let n=0; for(let j=0;j<W*H;j++) n+=m[j]; if(n>W*H*0.12) return 0; } // that much "skin" means the colours fooled us; leave the page alone
   const grow=Math.max(3,Math.round(Math.max(W,H)/220));
-  let g=m; for(let pass=0;pass<grow;pass++){ const n=new Uint8Array(g); for(let y=1;y<H-1;y++) for(let xx=1;xx<W-1;xx++){ const j=y*W+xx; if(g[j]) continue; if(zone[j]&&(g[j-1]||g[j+1]||g[j-W]||g[j+W])) n[j]=1; } g=n; }
+  let g=m; for(let pass=0;pass<grow;pass++){ const n=new Uint8Array(g); for(let y=1;y<H-1;y++) for(let xx=1;xx<W-1;xx++){ const j=y*W+xx; if(g[j]) continue; if(zone[j]&&!dark(j)&&(g[j-1]||g[j+1]||g[j-W]||g[j+W])) n[j]=1; } g=n; }
   let filled=0;
   for(let y=0;y<H;y++){ let xx=0; while(xx<W){ if(!g[y*W+xx]){ xx++; continue; } let e=xx; while(e<W&&g[y*W+e]) e++;
       const edgeB=Math.round(W*0.04); let L=xx>edgeB?(y*W+xx-1)*4:-1, Rr=e<W-edgeB?(y*W+e)*4:-1; if(L<0&&Rr<0) Rr=e<W?(y*W+e)*4:(xx>0?(y*W+xx-1)*4:-1); if(Rr<0&&L<0){ xx=e; continue; } const len=e-xx+1;

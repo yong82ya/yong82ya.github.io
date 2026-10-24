@@ -157,6 +157,25 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .drop.over{border-color:var(--accent);background:var(--accent-weak);color:var(--ink)}
 .drop strong{color:var(--ink);font-weight:500}
 
+.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.fcard{position:relative;display:flex;flex-direction:column;gap:6px;text-align:left;padding:14px 14px 12px;border-radius:14px;background:var(--surface);border:1px solid var(--line);min-width:0;min-height:96px}
+.fcard .fi{width:34px;height:26px;border-radius:4px 8px 6px 6px;background:var(--fc,var(--accent));opacity:.9;position:relative}
+.fcard .fi::before{content:"";position:absolute;left:0;top:-5px;width:15px;height:7px;border-radius:3px 3px 0 0;background:inherit}
+.fcard b{font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fcard small{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.fcard:hover b{color:var(--accent)}
+.fcard.add{border-style:dashed;align-items:center;justify-content:center;color:var(--muted);background:transparent}
+.fcard.add .plus{font-size:24px;line-height:1}
+.fcard.loose .fi{background:var(--muted);opacity:.45}
+.fhint{display:flex;justify-content:flex-end;padding:8px 14px;border-top:1px solid var(--line)}
+.fldbar{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.fldbar b{font-size:17px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fback{display:flex;align-items:center;gap:4px;height:34px;padding:0 12px 0 8px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-size:13px;color:var(--muted)}
+.fback .i{width:16px;height:16px}
+.fpick{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.fpick button{text-align:left;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:15px}
+.fpick button[aria-current="true"]{border-color:var(--accent);color:var(--accent)}
+.fpick input{padding:10px 12px;border-radius:10px;border:1px solid var(--line);font-size:15px;background:var(--surface);color:var(--ink);width:100%}
 .shelf-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
 .shelf-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.08em;color:var(--muted)}
 .shelf-head span{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -484,8 +503,10 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 
     <div class="storeline" id="storeLine"><span class="dot"></span><span>보관함 연결 확인 중</span></div>
 
-    <div>
-      <div class="shelf-head" style="margin-bottom:8px"><h2>보관함</h2><span id="shelfCount"></span></div>
+    <div id="shelfWrap">
+      <div class="shelf-head" style="margin-bottom:8px"><h2 id="shelfTitle">보관함</h2><span id="shelfCount"></span></div>
+      <div class="fgrid" id="folderGrid" hidden></div>
+      <div class="fldbar" id="folderBar" hidden><button class="fback" id="folderBack"><svg class="i"><use href="#i-back"/></svg>폴더 목록</button><b id="folderName"></b><button class="fback" id="folderMore">이름 바꾸기 · 지우기</button></div>
       <div class="filt" id="shelfFilt" role="tablist" aria-label="종류"><button data-k="" aria-pressed="true">전체</button><button data-k="pdf" aria-pressed="false">PDF</button><button data-k="doc" aria-pressed="false">문서</button><button data-k="sheet" aria-pressed="false">표</button></div>
       <ul class="shelf" id="shelf">
         <li class="empty" id="shelfEmpty"><b>아직 보관한 문서가 없습니다</b>파일을 열면 이곳에 자동으로 보관되고, 필기와 고친 내용이 함께 저장됩니다.</li>
@@ -1041,6 +1062,7 @@ function setStoreLine(){
 }
 async function loadLibrary(){
   if(!cap.db){ renderShelf(); return; }
+  await loadFolders();
   try{
     const snap = await userCol().where('kind','in',['pdf','doc','sheet']).limit(500).get();
     library = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -1054,15 +1076,101 @@ function renderRecentDocs(){
   const list=library.filter(m=>m.openedAt).slice(0,4); wrap.hidden=list.length<2;
   for(const m of list){ const b=el('button','rc'); b.append(el('span','f',(m.fmt||'pdf').toUpperCase().slice(0,4)), el('b',null,m.name.replace(/\.[^.]+$/,'')), el('small',null,(m.kind==='pdf'&&m.lastPage>1?`${m.lastPage}쪽 · `:'')+fmtDate(m.openedAt))); b.title=m.name+' 이어서 보기'; b.onclick=()=>openFromLibrary(m); box.append(b); }
 }
+/* folders: the home screen shows subject folders; a folder opens its own list */
+let FOLDERS=[];          // folder names in the order the person made them
+let curFolder=null;      // null = folder cards, '' = not in a folder, '*' = everything, else a folder name
+const FCOLORS=['#3b6fd8','#d9822b','#2f9e6e','#c2477a','#7a5bd0','#1f9bb0','#b5892a','#d04f3f'];
+const fColor=n=>FCOLORS[Math.max(0,FOLDERS.indexOf(n))%FCOLORS.length];
+async function loadFolders(){ if(!cap.db) return; try{ const s=await docRef('folders').get(); if(s.exists) FOLDERS=(s.data().list||[]).filter(x=>typeof x==='string'); }catch{} }
+function saveFolders(){ if(cap.db) docRef('folders').set({list:FOLDERS}).catch(e=>console.warn('folders',e)); }
+function allFolders(){ const set=[...FOLDERS]; for(const m of library) if(m.folder && !set.includes(m.folder)) set.push(m.folder); return set; }
+const inFolder=(m,f)=> f==='*' ? true : f==='' ? !m.folder || !allFolders().includes(m.folder) : m.folder===f;
+function folderForNew(m){ if(m.folder===undefined && !library.some(x=>x===m||x.id===m.id)) m.folder = (curFolder && curFolder!=='*') ? curFolder : null; return m.folder||null; }
+function goFolder(f){ curFolder=f; shelfKind=''; document.querySelectorAll('#shelfFilt button').forEach(x=>x.setAttribute('aria-pressed',String(!x.dataset.k))); renderShelf(); $('#shelfWrap').scrollIntoView({block:'start',behavior:'smooth'}); }
+$('#folderBack').onclick=()=>goFolder(null);
+function askName(title, hint, value=''){
+  return new Promise(res=>{
+    const done=v=>{ $('#scrim').hidden=true; res(v); };
+    sheet(title, hint, [{label:'취소',value:null},{label:'확인',value:'ok',cls:'btn-primary'}]).then(v=>{ if(v==='ok'){ const t=inp.value.trim().slice(0,30); res(t||null); } else res(null); });
+    const box=el('div','fpick'); const inp=el('input'); inp.value=value; inp.placeholder='예) 토익, 사회학, 영어'; inp.maxLength=30;
+    inp.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); const t=inp.value.trim().slice(0,30); done(t||null); } };
+    box.append(inp); $('#sheetBody').append(box); setTimeout(()=>inp.focus(),50);
+  });
+}
+async function newFolder(){
+  const n=await askName('새 폴더','과목이나 용도별로 이름을 붙여 주세요.');
+  if(!n) return null;
+  if(!allFolders().includes(n)){ FOLDERS.push(n); saveFolders(); }
+  return n;
+}
+async function setDocFolder(m, f){
+  m.folder=f||null;
+  if(m.kind==='pdf') await writeMeta(m); else await writeEntry(m);
+}
+async function askMove(m){
+  const list=allFolders();
+  const pick=await new Promise(res=>{
+    sheet('어느 폴더에 넣을까요?', `"${m.name}"`, [{label:'취소',value:undefined}]).then(res);
+    const box=el('div','fpick');
+    const add=(label,val,cur)=>{ const b=el('button',null,label); if(cur) b.setAttribute('aria-current','true'); b.onclick=()=>{ $('#scrim').hidden=true; res(val); }; box.append(b); };
+    for(const f of list) add('📁 '+f, f, m.folder===f);
+    add('분류 안 함', '', !m.folder || !list.includes(m.folder));
+    add('＋ 새 폴더 만들기', '+new', false);
+    $('#sheetBody').append(box);
+  });
+  if(pick===undefined) return;
+  let f=pick; if(f==='+new'){ f=await newFolder(); if(!f) return; }
+  await setDocFolder(m,f); renderShelf(); toast(f?`"${f}" 폴더로 옮겼습니다`:'폴더에서 뺐습니다');
+}
+async function askRow(m){
+  const v=await sheet(m.name, m.folder?`지금 폴더: ${m.folder}`:'아직 폴더에 넣지 않은 문서입니다.', [{label:'닫기',value:null},{label:'삭제',value:'del',cls:'btn-danger'},{label:'폴더로 옮기기',value:'move',cls:'btn-primary'}]);
+  if(v==='move') askMove(m); else if(v==='del') askDelete(m);
+}
+$('#folderMore').onclick=async()=>{
+  const f=curFolder; if(!f||f==='*') return;
+  const v=await sheet(`"${f}" 폴더`, '폴더를 지워도 안의 문서는 지워지지 않고 "분류 안 함"으로 옮겨집니다.', [{label:'닫기',value:null},{label:'폴더 지우기',value:'del',cls:'btn-danger'},{label:'이름 바꾸기',value:'ren',cls:'btn-primary'}]);
+  if(v==='ren'){
+    const n=await askName('폴더 이름 바꾸기','', f); if(!n||n===f) return;
+    if(allFolders().includes(n)){ toast('같은 이름의 폴더가 이미 있습니다'); return; }
+    const i=FOLDERS.indexOf(f); if(i>=0) FOLDERS[i]=n; else FOLDERS.push(n); saveFolders();
+    for(const m of library.filter(m=>m.folder===f)) await setDocFolder(m,n);
+    goFolder(n); toast('이름을 바꿨습니다');
+  } else if(v==='del'){
+    FOLDERS=FOLDERS.filter(x=>x!==f); saveFolders();
+    for(const m of library.filter(m=>m.folder===f)) await setDocFolder(m,null);
+    goFolder(null); toast('폴더를 지웠습니다');
+  }
+};
+function renderFolders(){
+  const g=$('#folderGrid'); g.replaceChildren();
+  const card=(name,count,latest,cls,onclick)=>{ const b=el('button','fcard'+(cls?' '+cls:'')); const i=el('span','fi'); if(!cls) b.style.setProperty('--fc',fColor(name)); b.append(i, el('b',null,name), el('small',null,count+'개'+(latest?' · '+fmtDate(latest):''))); b.onclick=onclick; g.append(b); };
+  for(const f of allFolders()){ const docs=library.filter(m=>m.folder===f); card(f, docs.length, docs[0]?.openedAt, '', ()=>goFolder(f)); }
+  const loose=library.filter(m=>inFolder(m,'')); if(loose.length) card('분류 안 함', loose.length, loose[0]?.openedAt, 'loose', ()=>goFolder(''));
+  const a=el('button','fcard add'); a.append(el('span','plus','＋'), el('small',null,'새 폴더')); a.onclick=async()=>{ const n=await newFolder(); if(n) renderShelf(); }; g.append(a);
+}
 function renderShelf(){
   const ul=$('#shelf'); const empty=$('#shelfEmpty');
-  ul.querySelectorAll('.row').forEach(r=>r.remove());
+  ul.querySelectorAll('.row,.fhint').forEach(r=>r.remove());
   library.sort((a,b)=>(b.openedAt||0)-(a.openedAt||0));
   renderRecentDocs();
-  $('#shelfFilt').hidden = library.length<2;
-  const shown = shelfKind ? library.filter(m=>(m.kind||'pdf')===shelfKind) : library;
+  if(curFolder!==null && curFolder!=='' && curFolder!=='*' && !allFolders().includes(curFolder)) curFolder=null;
+  if(curFolder==='' && !library.some(m=>inFolder(m,''))) curFolder=null;
+  // with no folders yet and only a few documents, a plain list is tidier than one lonely card
+  const flat = !allFolders().length && library.length<=6;
+  const grid = curFolder===null && !flat;
+  $('#folderGrid').hidden=!grid; $('#folderBar').hidden=curFolder===null;
+  $('#shelf').hidden=grid; empty.hidden=true;
+  $('#shelfTitle').textContent='보관함';
+  $('#folderName').textContent = curFolder==='' ? '분류 안 함' : curFolder==='*' ? '모든 문서' : (curFolder||'');
+  $('#folderMore').hidden = !curFolder || curFolder==='*';
+  if(grid){ $('#shelfFilt').hidden=true; renderFolders(); const c=$('#shelfCount'); c.replaceChildren(); const all=el('button','fback',`모든 문서 ${library.length}개 보기`); all.onclick=()=>goFolder('*'); c.append(all); return; }
+  const base = curFolder===null ? library : library.filter(m=>inFolder(m,curFolder));
+  $('#shelfFilt').hidden = base.length<4 || new Set(base.map(m=>m.kind||'pdf')).size<2;
+  const shown = shelfKind ? base.filter(m=>(m.kind||'pdf')===shelfKind) : base;
   empty.hidden = shown.length>0;
-  $('#shelfCount').textContent = library.length ? (shelfKind?`${shown.length} / `:'')+library.length+'개 문서' : '';
+  if(curFolder!==null && !shown.length) empty.innerHTML='<b>이 폴더는 비어 있습니다</b>문서 오른쪽 ⋯ 버튼에서 "폴더로 옮기기"를 고르거나, 이 폴더를 연 채로 파일을 열면 여기에 들어옵니다.';
+  else if(!library.length) empty.innerHTML='<b>아직 보관한 문서가 없습니다</b>파일을 열면 이곳에 자동으로 보관되고, 필기와 고친 내용이 함께 저장됩니다.';
+  $('#shelfCount').textContent = base.length ? (shelfKind?`${shown.length} / `:'')+base.length+'개 문서' : '';
   for(const m of shown){
     const li=el('li','row');
     const ft=el('div','ftype',(m.fmt||'pdf').toUpperCase().slice(0,4));
@@ -1077,10 +1185,12 @@ function renderShelf(){
     meta.append(el('span',null,fmtDate(m.openedAt)));
     open.append(meta);
     open.onclick=()=>openFromLibrary(m);
-    const more=el('button','more'); more.title='삭제'; more.innerHTML='<svg class="i"><use href="#i-more"/></svg>';
-    more.onclick=()=>askDelete(m);
+    if(curFolder==='*' && m.folder && allFolders().includes(m.folder)) meta.append(el('span',null,'📁 '+m.folder));
+    const more=el('button','more'); more.title='폴더로 옮기기 · 삭제'; more.innerHTML='<svg class="i"><use href="#i-more"/></svg>';
+    more.onclick=()=>askRow(m);
     li.append(ft,open,more); ul.append(li);
   }
+  if(flat && library.length){ const hint=el('li','fhint'); const b=el('button','fback','＋ 과목별 폴더 만들기'); b.onclick=async()=>{ const n=await newFolder(); if(n) renderShelf(); }; hint.append(b); ul.append(hint); }
 }
 async function askDelete(m){
   const v = await sheet('보관함에서 삭제할까요?', `"${m.name}"와 이 문서에 한 필기가 모두 지워집니다. 되돌릴 수 없습니다.`,
@@ -1661,7 +1771,7 @@ async function uploadPdf(meta,file){
 }
 async function writeMeta(meta, full){
   if(!cap.db) return;
-  const body = {kind:'pdf',name:meta.name,size:meta.size,addedAt:meta.addedAt,openedAt:meta.openedAt,lastPage:meta.lastPage,inkPages:meta.inkPages,pages:meta.pages||0,assetId:meta.assetId||null,url:meta.url||null,parts:meta.parts||null,fmt:meta.fmt||'pdf',srcSize:meta.srcSize||null,texts:meta.texts||null};
+  const body = {kind:'pdf',name:meta.name,size:meta.size,addedAt:meta.addedAt,openedAt:meta.openedAt,lastPage:meta.lastPage,inkPages:meta.inkPages,pages:meta.pages||0,assetId:meta.assetId||null,url:meta.url||null,parts:meta.parts||null,fmt:meta.fmt||'pdf',srcSize:meta.srcSize||null,texts:meta.texts||null,folder:folderForNew(meta)};
   try{ await docRef(meta.id).set(body); }catch(e){ console.warn('meta write',e); }
 }
 async function openFromLibrary(m){
@@ -3547,7 +3657,7 @@ async function storeOriginal(meta,file){
   try{ const ids=[]; const n=Math.max(1,Math.ceil(file.size/PART_BYTES)); for(let i=0;i<n;i++){ const b64=await blobToB64(file.slice(i*PART_BYTES,(i+1)*PART_BYTES)); ids.push((await cap.assets.upload(new Blob([b64],{type:'text/plain'}),{type:'text/plain'})).id); } meta.orig=ids; }catch(e){ console.warn('orig upload',e); }
 }
 async function fetchParts(ids,size){ const out=new Uint8Array(size); let off=0; for(const id of ids){ const t=await (await fetch('./_blob/'+id)).text(); off+=b64ToBytes(t.trim(),out,off); } return out.subarray(0,off); }
-async function writeEntry(m){ if(!cap.db) return; const body={kind:m.kind,fmt:m.fmt,name:m.name,size:m.size,addedAt:m.addedAt,openedAt:m.openedAt,orig:m.orig||null,chunks:m.chunks||0,edits:m.edits||null}; try{ await docRef(m.id).set(body); }catch(e){ console.warn('entry',e); } }
+async function writeEntry(m){ if(!cap.db) return; const body={kind:m.kind,fmt:m.fmt,name:m.name,size:m.size,addedAt:m.addedAt,openedAt:m.openedAt,orig:m.orig||null,chunks:m.chunks||0,edits:m.edits||null,folder:folderForNew(m)}; try{ await docRef(m.id).set(body); }catch(e){ console.warn('entry',e); } }
 async function openOtherFile(file){
   const ext=extOf(file.name);
   if(ext==='doc'||ext==='xls'||ext==='ppt'){ toast('옛 오피스 형식은 아직 열 수 없습니다. DOCX·XLSX로 저장해서 열어 주세요.',4500); return; }

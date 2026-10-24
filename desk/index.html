@@ -666,7 +666,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
         <button class="sc-side" id="scAutoShot" aria-pressed="false" title="테두리가 잡히고 손이 멈추면 저절로 찍기"><span class="sc-done-n">A</span><span>자동 찍기</span></button>
         <button class="sc-side" id="scDone" title="다 찍었으면 다듬기로"><span class="sc-done-n" id="scDoneN">0</span><span>다듬기</span></button>
       </div>
-      <input type="file" id="scPick" accept="image/*" multiple class="sr">
+      <input type="file" id="scPick" accept="image/*" multiple class="sr"><input type="file" id="scNative" accept="image/*" capture="environment" class="sr">
     </div>
     <div class="sc-edit" id="scEdit" hidden>
       <div class="sc-tools" role="toolbar" aria-label="다듬기 도구">
@@ -678,7 +678,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
         <button class="ib" id="scUndoBrush" title="지우개 되돌리기" hidden><svg class="i"><use href="#i-undo"/></svg></button>
         <span class="sep"></span>
         <button class="ib" id="scLeft" title="앞으로">◀</button><button class="ib" id="scRight" title="뒤로">▶</button>
-        <button class="ib" id="scDel" title="이 쪽 빼기"><svg class="i"><use href="#i-trash"/></svg></button>
+        <button class="ib" id="scMore" title="기본 카메라로 한 장 더"><svg class="i"><use href="#i-cam"/></svg><span>더 찍기</span></button><button class="ib" id="scDel" title="이 쪽 빼기"><svg class="i"><use href="#i-trash"/></svg></button>
       </div>
       <div class="sc-stage" id="scStage"><canvas id="scCanvas"></canvas><svg class="sc-quad" id="scQuad" hidden></svg><div class="sc-handles" id="scHandles" hidden></div><div class="sc-hint" id="scHint" hidden></div><div class="sc-loupe" id="scLoupe" hidden><canvas></canvas></div></div>
     </div>
@@ -1107,7 +1107,7 @@ function scDetect(src,S0){
     for(let p=0;p<ver.length;p++) for(let q=p+1;q<ver.length;q++){
       const v1=ver[p], v2=ver[q];
       const pts=[inter(h1,v1),inter(h1,v2),inter(h2,v2),inter(h2,v1)]; if(pts.some(z=>!z)) continue;
-      if(pts.some(([px,py])=>px<-w*0.04||py<-h*0.04||px>w*1.04||py>h*1.04)) continue;
+      if(pts.some(([px,py])=>px<w*0.008||py<h*0.008||px>w*0.992||py>h*0.992)) continue;
       // order: top-left, top-right, bottom-right, bottom-left
       const cx=pts.reduce((s,z)=>s+z[0],0)/4, cy=pts.reduce((s,z)=>s+z[1],0)/4;
       const o=pts.slice().sort((A,Bq)=>Math.atan2(A[1]-cy,A[0]-cx)-Math.atan2(Bq[1]-cy,Bq[0]-cx)); // clockwise from left-ish
@@ -1117,6 +1117,7 @@ function scDetect(src,S0){
       let sign=0, convex=true; for(let z=0;z<4;z++){ const A=quad[z],Bq=quad[(z+1)%4],C=quad[(z+2)%4]; const zz=(Bq[0]-A[0])*(C[1]-Bq[1])-(Bq[1]-A[1])*(C[0]-Bq[0]); const sg=Math.sign(zz); if(!sign) sign=sg; else if(sg!==sign){ convex=false; break; } } if(!convex) continue;
       // opposite sides should be of similar length (perspective allows some difference)
       const len=z=>Math.hypot(quad[(z+1)%4][0]-quad[z][0],quad[(z+1)%4][1]-quad[z][1]); if(Math.min(len(0),len(2))/Math.max(len(0),len(2))<0.6||Math.min(len(1),len(3))/Math.max(len(1),len(3))<0.6) continue;
+      { const l0=len(0)+len(2), l1=len(1)+len(3); if(Math.min(l0,l1)/Math.max(l0,l1)<0.38) continue; } // documents are not slivers
       let score=0, weakest=1, ok=true;
       for(let z=0;z<4;z++){ const s=side(quad[z],quad[(z+1)%4],cx,cy); const sc=0.4*s.sup+s.cov; if(s.sup<0.15||s.cov<0.55){ ok=false; break; } score+=sc; weakest=Math.min(weakest,sc); }
       if(!ok) continue;
@@ -1188,7 +1189,32 @@ $('#scBack').onclick=async()=>{
   if(SC.pages.length){ const ok=await sheet('사진으로 PDF 만들기를 그만둘까요?','찍은 사진은 저장되지 않습니다.',[{label:'계속 만들기',value:false},{label:'그만두기',value:true,cls:'btn-danger'}]); if(!ok) return; }
   scStopCam(); SC.pages=[]; SC.cache.clear(); $('#scan').hidden=true; $('#home').hidden=false;
 };
-$('#tScan').onclick=scOpen;
+// photo → PDF: three ways in, best quality first
+$('#tScan').onclick=()=>{
+  const scrim=$('#scrim'); $('#sheetTitle').textContent='사진으로 PDF'; const body=$('#sheetBody'); body.replaceChildren();
+  const list=el('div','set-list');
+  const item=(icon,title,sub,fn)=>{ const b=el('button','set-item'); const t=el('span'); t.append(el('b',null,title),el('small',null,sub)); b.append(el('span','ic',icon),t,el('span','go','›')); b.onclick=fn; list.append(b); };
+  item('✨','아이패드 문서 스캔 (가장 선명)','파일 앱의 문서 스캔으로 찍고, 저장한 PDF를 여기서 엽니다',()=>{
+    $('#sheetTitle').textContent='아이패드 문서 스캔'; body.replaceChildren();
+    const ol=el('ol'); ol.style.cssText='margin:0;padding-left:20px;line-height:1.9;color:var(--ink)';
+    for(const t of ['아이패드 <b>파일</b> 앱을 엽니다','왼쪽 위 <b>⋯</b> 버튼(또는 폴더 빈 곳 길게 누르기) → <b>문서 스캔</b>','페이지를 연달아 찍고 <b>저장</b> (테두리와 펴기는 자동)','여기로 돌아와 아래 <b>스캔한 PDF 열기</b>를 누르고 방금 저장한 파일 고르기']){ const li=document.createElement('li'); li.innerHTML=t; ol.append(li); }
+    const tip=el('p',null,'애플이 만든 스캐너라 테두리 인식과 선명도가 가장 좋습니다. 열린 PDF에는 바로 필기하고 녹음할 수 있어요.'); tip.style.cssText='margin:10px 0 0;font-size:13px;color:var(--muted)';
+    body.append(ol,tip); const acts=$('#sheetActs'); acts.replaceChildren();
+    const back=el('button','btn btn-ghost','닫기'); back.onclick=()=>scrim.hidden=true;
+    const open=el('label','btn btn-primary','스캔한 PDF 열기'); open.htmlFor='fileIn'; open.onclick=()=>setTimeout(()=>scrim.hidden=true,300);
+    acts.append(back,open); });
+  item('📷','기본 카메라로 찍기 (선명)','아이패드 카메라로 찍어 여기서 다듬습니다 · 찰칵 소리가 날 수 있어요',()=>{ scrim.hidden=true; $('#scNative').click(); });
+  item('🤫','무음 촬영 (빠름)','여기서 바로 연달아 찍습니다 · 소리는 없지만 화질은 낮아요',()=>{ scrim.hidden=true; scOpen(); });
+  body.append(list); const acts=$('#sheetActs'); acts.replaceChildren(); const close=el('button','btn btn-ghost','닫기'); close.onclick=()=>scrim.hidden=true; acts.append(close); scrim.hidden=false;
+};
+$('#scNative').onchange=async e=>{
+  const files=[...e.target.files]; e.target.value=''; if(!files.length) return; $('#scrim').hidden=true;
+  if($('#scan').hidden){ $('#home').hidden=true; $('#scan').hidden=false; SC.pages=[]; SC.cur=-1; SC.cache.clear(); }
+  for(const f of files){ try{ const bmp=await createImageBitmap(f,{imageOrientation:'from-image'}).catch(()=>createImageBitmap(f)); scAdd(fitCanvas(bmp,3200)); bmp.close?.(); }catch{ toast('사진을 열 수 없습니다'); } }
+  scSetMode('edit');
+};
+// add more photos with the camera from the edit view as well
+
 
 // --- geometry: rotate, perspective warp
 function scRotated(pg){
@@ -1248,17 +1274,38 @@ function scFingerMask(c){
   const rects=[]; for(let gy=0;gy<gh;gy++) for(let gx=0;gx<gw;gx++) if(keep[gy*gw+gx]) rects.push([(gx-1)*cs,(gy-1)*cs,cs*3,cs*3]);
   return rects;
 }
+// fingers: find skin touching the page edge, then rebuild those pixels from the paper on either side of each row,
+// so ruled lines and paper shading carry on through where the finger was
+function scInpaintFingers(c){
+  const rects=scFingerMask(c); if(!rects.length) return 0;
+  const W=c.width, H=c.height, x=c.getContext('2d'); const id=x.getImageData(0,0,W,H), a=id.data;
+  const zone=new Uint8Array(W*H); for(const [rx,ry,rw,rh] of rects){ for(let y=Math.max(0,ry);y<Math.min(H,ry+rh);y++) for(let xx=Math.max(0,rx);xx<Math.min(W,rx+rw);xx++) zone[y*W+xx]=1; }
+  // skin test per pixel inside the zone (a little looser than the cell test), then grow to cover the soft edge and shadow
+  const m=new Uint8Array(W*H);
+  for(let i=0,j=0;j<W*H;i+=4,j++){ if(!zone[j]) continue; const R=a[i],G=a[i+1],B=a[i+2]; const Cb=128-0.168736*R-0.331264*G+0.5*B, Cr=128+0.5*R-0.418688*G-0.081312*B; if(Cr>=133&&Cr<=180&&Cb>=70&&Cb<=130&&R>B+8&&R>=G) m[j]=1; }
+  const grow=Math.max(3,Math.round(Math.max(W,H)/220));
+  let g=m; for(let pass=0;pass<grow;pass++){ const n=new Uint8Array(g); for(let y=1;y<H-1;y++) for(let xx=1;xx<W-1;xx++){ const j=y*W+xx; if(g[j]) continue; if(zone[j]&&(g[j-1]||g[j+1]||g[j-W]||g[j+W])) n[j]=1; } g=n; }
+  let filled=0;
+  for(let y=0;y<H;y++){ let xx=0; while(xx<W){ if(!g[y*W+xx]){ xx++; continue; } let e=xx; while(e<W&&g[y*W+e]) e++;
+      const edgeB=Math.round(W*0.04); let L=xx>edgeB?(y*W+xx-1)*4:-1, Rr=e<W-edgeB?(y*W+e)*4:-1; if(L<0&&Rr<0) Rr=e<W?(y*W+e)*4:(xx>0?(y*W+xx-1)*4:-1); if(Rr<0&&L<0){ xx=e; continue; } const len=e-xx+1;
+      if(L>=0&&Rr>=0){ const lum=o=>a[o]*0.3+a[o+1]*0.59+a[o+2]*0.11; const d=lum(L)-lum(Rr); if(d>45) Rr=-1; else if(d<-45) L=-1; } // a dark neighbour is the page edge or a shadow, not paper
+      for(let k=xx;k<e;k++){ const t=(k-xx+1)/len, o=(y*W+k)*4; for(let ch=0;ch<3;ch++){ const lv=L>=0?a[L+ch]:a[Rr+ch], rv=Rr>=0?a[Rr+ch]:a[L+ch]; a[o+ch]=lv*(1-t)+rv*t; } filled++; }
+      xx=e; } }
+  // soften the seam a little by averaging each filled pixel with the rows above and below
+  for(let y=1;y<H-1;y++) for(let xx=0;xx<W;xx++){ const j=y*W+xx; if(!g[j]) continue; const o=j*4; for(let ch=0;ch<3;ch++) a[o+ch]=(a[o+ch]*2+a[o-W*4+ch]+a[o+W*4+ch])/4; }
+  x.putImageData(id,0,0); return filled;
+}
 function scPaper(bg,c){ // average paper colour near the centre
   let r=0,g=0,b=0,n=0; for(let y=Math.round(c.height*.3);y<c.height*.7;y+=17) for(let x=Math.round(c.width*.3);x<c.width*.7;x+=17){ const i=(y*c.width+x)*4; r+=bg[i]; g+=bg[i+1]; b+=bg[i+2]; n++; } return n?`rgb(${r/n|0},${g/n|0},${b/n|0})`:'#fff'; }
 function scRender(pg, maxSide){
   const rot=scRotated(pg); let c;
   const q=pg.quad||FULLQ; const full=q===FULLQ||JSON.stringify(q)===JSON.stringify(FULLQ);
   if(full){ c=fitCanvas(rot,maxSide); } else c=scWarp(rot,q,maxSide);
-  const needBg=pg.filt!=='orig'||pg.finger||pg.strokes.length; const bg=needBg?scBackground(c):null;
-  const fingers=pg.finger?scFingerMask(c):[];
+  if(pg.finger){ try{ scInpaintFingers(c); }catch(e){ console.warn('finger',e); } }
+  const needBg=pg.filt!=='orig'||pg.strokes.length; const bg=needBg?scBackground(c):null;
   const paper=pg.filt==='orig'&&bg?scPaper(bg,c):'#fff';
   scFilter(c,pg.filt,bg);
-  const x=c.getContext('2d'); x.fillStyle=paper; for(const [rx,ry,rw,rh] of fingers) x.fillRect(rx,ry,rw,rh);
+  const x=c.getContext('2d'); x.fillStyle=paper;
   for(const [sx,sy,sr] of pg.strokes){ x.beginPath(); x.arc(sx*c.width,sy*c.height,sr*c.width,0,Math.PI*2); x.fill(); }
   return c;
 }
@@ -1316,6 +1363,7 @@ document.querySelectorAll('#scFilt button').forEach(b=>b.onclick=()=>{ const pg=
 $('#scFinger').onclick=()=>{ const pg=scCurrent(); if(!pg) return; pg.finger=!pg.finger; SC.corner=false; scShowEdit(); scStrip(); if(pg.finger) toast('가장자리에 걸친 손가락을 지웠습니다. 남은 곳은 지우개로 문질러 주세요',3500); };
 $('#scBrush').onclick=()=>{ SC.brush=!SC.brush; if(SC.brush) SC.corner=false; scShowEdit(); };
 $('#scUndoBrush').onclick=()=>{ const pg=scCurrent(); if(!pg?.strokes.length) return; const last=pg._marks?.pop()??pg.strokes.length-1; pg.strokes.length=last; scShowEdit(); scStrip(); };
+$('#scMore').onclick=()=>$('#scNative').click();
 $('#scDel').onclick=()=>{ if(SC.cur<0) return; SC.pages.splice(SC.cur,1); SC.cache.clear(); SC.cur=Math.min(SC.cur,SC.pages.length-1); scStrip(); if(!SC.pages.length) scSetMode('cam'); else scShowEdit(); };
 $('#scLeft').onclick=()=>{ const i=SC.cur; if(i<=0) return; [SC.pages[i-1],SC.pages[i]]=[SC.pages[i],SC.pages[i-1]]; SC.cur=i-1; SC.cache.clear(); scStrip(); };
 $('#scRight').onclick=()=>{ const i=SC.cur; if(i<0||i>=SC.pages.length-1) return; [SC.pages[i+1],SC.pages[i]]=[SC.pages[i],SC.pages[i+1]]; SC.cur=i+1; SC.cache.clear(); scStrip(); };
@@ -1335,7 +1383,7 @@ $('#scMake').onclick=async()=>{
     const PDFLib=await loadPdfLib(); const doc=await PDFLib.PDFDocument.create();
     for(let i=0;i<SC.pages.length;i++){
       $('#scBusyText').textContent=`PDF 만드는 중 ${i+1}/${SC.pages.length}`; await new Promise(r=>setTimeout(r,0));
-      const c=scRender(SC.pages[i],2200); const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',SC.pages[i].filt==='orig'?0.85:0.8));
+      const c=scRender(SC.pages[i],3000); const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));
       const img=await doc.embedJpg(new Uint8Array(await blob.arrayBuffer())); const W=595.28, H=W*c.height/c.width;
       const page=doc.addPage([W,H]); page.drawImage(img,{x:0,y:0,width:W,height:H}); c.width=c.height=0;
     }

@@ -1021,25 +1021,35 @@ async function sample(input, opts={}){
   const contents=msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:String(m.content||'')}]}));
   if(opts.images?.length){ const last=contents[contents.length-1]; for(const im of opts.images) last.parts.push({inline_data:{mime_type:im.type||'image/jpeg',data:await b64(im)}}); }
   const ctl=new AbortController(); if(opts.signal){ if(opts.signal.aborted) ctl.abort(); else opts.signal.addEventListener('abort',()=>ctl.abort(),{once:true}); }
+  const ver=m=>{ const x=m.match(/gemini-(\d+(?:\.\d+)?)/); return x?parseFloat(x[1]):0; };
+  const think=m=>ver(m)>=3?{thinkingConfig:{thinkingLevel:'low'}}:(/2\.5-flash/.test(m)?{thinkingConfig:{thinkingBudget:0}}:null);
+  const noThink=new Set();
+  // while nothing has come back yet, show that it is working
+  const t0=Date.now(); let got=false; const tick=setInterval(()=>{ if(!got) opts.onText?.({text:`*제미나이가 읽고 생각하는 중… ${Math.round((Date.now()-t0)/1000)}초*`,delta:''}); },1000);
+  try{
   let r=null, lastErr=null;
   for(let t=0;t<tries.length;t++){ model=tries[t];
     let first=false; const wd=setTimeout(()=>{ if(!first) ctl.abort('slow'); },90000);
-    try{ r=await fetch(`${API}/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents}),signal:ctl.signal}); }
+    const gc=noThink.has(model)?null:think(model);
+    try{ r=await fetch(`${API}/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(gc?{contents,generationConfig:gc}:{contents}),signal:ctl.signal}); }
     catch(e){ clearTimeout(wd); if(ctl.signal.reason==='slow') throw {gemini:true,code:'timeout',message:'제미나이가 90초 동안 답하지 않았습니다. 잠시 뒤 다시 해 주세요.'}; if(opts.signal?.aborted) throw e; throw {gemini:true,code:'error',message:'제미나이에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.'}; }
     first=true; clearTimeout(wd);
     if(r.ok) break;
     lastErr=await apiErr(r); r=null;
+    if(gc && r===null && /thinking/i.test(lastErr.message)){ noThink.add(model); t--; continue; }
     if(lastErr.code==='bad_key') throw lastErr;
     if(lastErr.code==='busy'||lastErr.code==='rate_limited'||/not found|404/i.test(lastErr.message)){ opts.onText?.({text:t+1<tries.length?'다른 제미나이 모델로 다시 해 보는 중…':'',delta:''}); await new Promise(z=>setTimeout(z,1200)); continue; }
     throw lastErr;
   }
   if(!r) throw lastErr||{gemini:true,code:'error',message:'제미나이가 답하지 못했습니다'};
+  got=true;
   const rd=r.body.getReader(); const dec=new TextDecoder(); let buf='', text='', stop='';
   for(;;){ const {value,done}=await rd.read(); if(done) break; buf+=dec.decode(value,{stream:true});
     let i; while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i).trim(); buf=buf.slice(i+1); if(!line.startsWith('data:')) continue;
       try{ const j=JSON.parse(line.slice(5)); const c=j.candidates?.[0]; const d=(c?.content?.parts||[]).map(p=>p.text||'').join(''); if(c?.finishReason) stop=c.finishReason; if(d){ text+=d; opts.onText?.({text,delta:d}); } }catch{} } }
   if(!text && stop==='SAFETY') throw {gemini:true,code:'error',message:'제미나이가 이 내용에는 답하지 않았습니다'};
   return {text, truncated:stop==='MAX_TOKENS', modelApplied:model};
+  } finally { clearInterval(tick); }
 }
 sample.limits=async()=>({images:true});
 sample.json=async(input,opts)=>{ const r=await sample((typeof input==='string'?input:input.map(m=>m.content).join('\n'))+'\n\nJSON만 출력해. 설명이나 ``` 표시는 붙이지 마.',opts); const t=r.text.replace(/^```(?:json)?|```$/gm,'').trim(); return JSON.parse(t); };
@@ -4427,7 +4437,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='10-26 21:28';
+const DESK_BUILD='10-26 21:34';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();

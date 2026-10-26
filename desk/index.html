@@ -2534,7 +2534,12 @@ function openRecSheet(){
       del.onclick=()=>{ if(del.textContent!=='정말 삭제'){ del.textContent='정말 삭제'; del.classList.add('btn-danger'); return; }
         RC.list=RC.list.filter(x=>x!==r); if(RC.cur===r) closePlayer(); updRecBadge(); li.remove();
         if(cap.db && !V.meta.local){ recCol().doc(r.id).delete().catch(()=>{}); if(cap.assets) for(const id of (r.parts||[])) cap.assets.delete(id).catch(()=>{}); } };
-      btns.append(play,del); li.append(info,btns); ul.append(li);
+      const exp=el('button','btn btn-ghost','내보내기'); exp.style.minHeight='36px';
+      exp.onclick=async()=>{ exp.disabled=true; try{ const url=await recUrl(r); if(!url) throw new Error('none'); const b=await (await fetch(url)).blob();
+          const ty=(b.type||'').split(';')[0]; const ext={'audio/mp4':'m4a','audio/x-m4a':'m4a','audio/aac':'aac','audio/mpeg':'mp3','audio/wav':'wav','audio/x-wav':'wav','audio/webm':'webm','video/webm':'webm','audio/ogg':'ogg','video/mp4':'m4a'}[ty]||(r.name.match(/\.(m4a|mp3|aac|wav|ogg|webm|3gp|amr)$/i)?.[1])||'m4a';
+          await offerFile(`${r.name.replace(/\.[^.]+$/,'')}.${ext}`, b); }
+        catch(e){ console.warn(e); toast('이 녹음은 이 기기에 없어서 내보낼 수 없습니다',3500); } finally{ exp.disabled=false; } };
+      btns.append(play,exp,del); li.append(info,btns); ul.append(li);
     }
     body.append(ul);
   }

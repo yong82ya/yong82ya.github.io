@@ -1013,7 +1013,11 @@ async function sample(input, opts={}){
   const msgs=typeof input==='string'?[{role:'user',content:input}]:input;
   const contents=msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:String(m.content||'')}]}));
   if(opts.images?.length){ const last=contents[contents.length-1]; for(const im of opts.images) last.parts.push({inline_data:{mime_type:im.type||'image/jpeg',data:await b64(im)}}); }
-  const r=await fetch(`${API}/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents}),signal:opts.signal});
+  const ctl=new AbortController(); if(opts.signal){ if(opts.signal.aborted) ctl.abort(); else opts.signal.addEventListener('abort',()=>ctl.abort(),{once:true}); }
+  let first=false; const wd=setTimeout(()=>{ if(!first) ctl.abort('slow'); },90000);
+  let r; try{ r=await fetch(`${API}/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents}),signal:ctl.signal}); }
+  catch(e){ clearTimeout(wd); if(ctl.signal.reason==='slow') throw {gemini:true,code:'timeout',message:'제미나이가 90초 동안 답하지 않았습니다. 잠시 뒤 다시 해 주세요.'}; if(opts.signal?.aborted) throw e; throw {gemini:true,code:'error',message:'제미나이에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.'}; }
+  first=true; clearTimeout(wd);
   if(!r.ok){ const e=await apiErr(r); if(r.status===404){ LS.set(MODEL,null); } throw e; }
   const rd=r.body.getReader(); const dec=new TextDecoder(); let buf='', text='', stop='';
   for(;;){ const {value,done}=await rd.read(); if(done) break; buf+=dec.decode(value,{stream:true});
@@ -1027,12 +1031,16 @@ sample.json=async(input,opts)=>{ const r=await sample((typeof input==='string'?i
 
 // a stalled connection should not leave the person waiting forever
 const withTimeout=(p,ms,msg)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej({gemini:true,code:'timeout',message:msg}),ms))]);
-async function test(key){ return withTimeout(testNow(key),30000,'제미나이가 30초 동안 답이 없습니다. 인터넷을 확인하고 다시 눌러 주세요.'); }
-async function testNow(key){ const model=await pickModel(key); const r=await fetch(`${API}/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents:[{role:'user',parts:[{text:'"연결됐어요"라고만 답해.'}]}]})}); if(!r.ok) throw await apiErr(r); return model; }
-
+// checking a key = asking Google which models it may use (quick, and fails at once for a wrong key)
+async function test(key,step){
+  step?.('구글에 키 확인 중');
+  const model=await withTimeout(pickModel(key),20000,'키 확인 단계에서 구글이 20초 동안 답하지 않았습니다. 와이파이를 바꾸거나 잠시 뒤 다시 해 보세요.');
+  step?.('확인됨 · '+model);
+  return model;
+}
 window.DESK_AI={ hasKey, sample, test,
   key:()=>LS.get(KEY,''), model:()=>LS.get(MODEL,''),
-  async setKey(k){ k=String(k||'').trim(); const model=await test(k); LS.set(KEY,k); LS.set(MODEL,model); return model; },
+  async setKey(k,step){ k=String(k||'').trim().replace(/\s+/g,''); const model=await test(k,step); LS.set(KEY,k); LS.set(MODEL,model); return model; },
   clear(){ LS.set(KEY,null); LS.set(MODEL,null); } };
 })();
 </script>
@@ -4420,8 +4428,8 @@ function openAiPanel(){
   const acts=$('#sheetActs'); acts.replaceChildren();
   const close=el('button','btn btn-ghost','닫기'); close.onclick=()=>scrim.hidden=true;
   const save=el('button','btn btn-primary','연결 확인하고 저장');
-  save.onclick=async()=>{ const k=inp.value.trim(); if(!k){ toast('키를 붙여넣어 주세요'); return; } save.disabled=true; save.textContent='확인 중… (보통 10초 안쪽)';
-    try{ const m=await A.setKey(k); toast(`제미나이 연결됨 · ${m}`,3500); scrim.hidden=true; samp=null; }
+  save.onclick=async()=>{ const k=inp.value.trim(); if(!k){ toast('키를 붙여넣어 주세요'); return; } save.disabled=true; save.textContent='확인 중…';
+    try{ const m=await A.setKey(k,t=>{ save.textContent=t; }); toast(`제미나이 연결됨 · ${m}`,3500); scrim.hidden=true; samp=null; }
     catch(e){ toast(e?.message||'키를 확인하지 못했습니다',4500); }
     finally{ save.disabled=false; save.textContent='연결 확인하고 저장'; } };
   acts.append(close);

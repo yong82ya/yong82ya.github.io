@@ -3197,6 +3197,13 @@ function textToHtml(t, md){
   close(); return html;
 }
 function decodeText(u8){
+  // phones often save text as UTF-16 (with or without a byte-order mark); look for it before trying UTF-8 and the old Korean code page
+  if(u8[0]===0xFF&&u8[1]===0xFE) return new TextDecoder('utf-16le').decode(u8.subarray(2));
+  if(u8[0]===0xFE&&u8[1]===0xFF) return new TextDecoder('utf-16be').decode(u8.subarray(2));
+  if(u8[0]===0xEF&&u8[1]===0xBB&&u8[2]===0xBF) u8=u8.subarray(3);
+  { const n=Math.min(u8.length,4000); let ev=0, od=0; for(let i=0;i<n;i++) if(u8[i]===0){ if(i%2) od++; else ev++; }
+    if(n>8 && od>n/8 && od>ev*4) return new TextDecoder('utf-16le').decode(u8);
+    if(n>8 && ev>n/8 && ev>od*4) return new TextDecoder('utf-16be').decode(u8); }
   try{ return new TextDecoder('utf-8',{fatal:true}).decode(u8); }catch{}
   try{ return new TextDecoder('euc-kr').decode(u8); }catch{}
   return new TextDecoder().decode(u8);

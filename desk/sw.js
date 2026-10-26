@@ -1,5 +1,5 @@
 // 문서 작업대 service worker: serves stored files (_blob/<id>) from this device and keeps the app usable offline.
-const CACHE='desk-v2';
+const CACHE='desk-v3';
 const CDN=/^https:\/\/(cdn\.jsdelivr\.net|fonts\.(googleapis|gstatic)\.com)\//;
 self.addEventListener('install',e=>{ self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['./','./index.html','./manifest.webmanifest','./icon.png']).catch(()=>{}))); });
 self.addEventListener('activate',e=>{ e.waitUntil((async()=>{ for(const k of await caches.keys()) if(k!==CACHE) await caches.delete(k); await self.clients.claim(); })()); });
@@ -10,8 +10,16 @@ async function blobRes(id){
   const b=await new Promise((res,rej)=>{ const q=d.transaction('blobs').objectStore('blobs').get(id); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); });
   return b ? new Response(b,{headers:{'content-type':b.type||'application/octet-stream'}}) : new Response('not found',{status:404});
 }
+// shared from the phone's share menu: keep it, then open the app to pick it up
+async function takeShare(req){
+  try{ const f=await req.formData(); const v={title:f.get('title')||'',text:f.get('text')||'',url:f.get('url')||'',files:f.getAll('files').filter(x=>x&&typeof x==='object'),at:Date.now()};
+    const d=await idb(); await new Promise((res,rej)=>{ const t=d.transaction('blobs','readwrite'); t.objectStore('blobs').put(v,'share:pending'); t.oncomplete=res; t.onerror=()=>rej(t.error); }); }catch(e){}
+  return Response.redirect('./?share=1',303);
+}
 self.addEventListener('fetch',e=>{
-  const req=e.request; if(req.method!=='GET') return;
+  const req=e.request;
+  if(req.method==='POST' && new URL(req.url).pathname.endsWith('/share-target')){ e.respondWith(takeShare(req)); return; }
+  if(req.method!=='GET') return;
   const u=new URL(req.url);
   const m=u.origin===location.origin && u.pathname.match(/\/_blob\/([\w-]+)$/);
   if(m){ e.respondWith(blobRes(m[1])); return; }

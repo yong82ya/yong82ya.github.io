@@ -1063,9 +1063,27 @@ async function test(key,step){
   step?.('확인됨 · '+model);
   return model;
 }
-window.DESK_AI={ hasKey, sample, test,
+async function ping(model){
+  const key=LS.get(KEY,''); const t0=performance.now(); const ver=(model.match(/gemini-(\d+(?:\.\d+)?)/)||[])[1]||0;
+  const gc=ver>=3?{thinkingConfig:{thinkingLevel:'low'}}:(/2\.5-flash/.test(model)?{thinkingConfig:{thinkingBudget:0}}:undefined);
+  const call=async cfg=>fetch(`${API}/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(cfg?{contents:[{role:'user',parts:[{text:'"네"라고만 답해.'}]}],generationConfig:cfg}:{contents:[{role:'user',parts:[{text:'"네"라고만 답해.'}]}]})});
+  let r=await withTimeout(call(gc),40000,'40초 응답 없음'); if(!r.ok&&gc){ const e=await apiErr(r.clone()); if(/thinking/i.test(e.message)) r=await withTimeout(call(),40000,'40초 응답 없음'); }
+  if(!r.ok) throw await apiErr(r); return Math.round(performance.now()-t0);
+}
+window.DESK_AI={ hasKey, sample, test, ping,
+  models:()=>{ try{ return JSON.parse(LS.get(MODELS,'[]')); }catch{ return []; } },
+  async refreshModels(){ const l=await listModels(LS.get(KEY,'')); LS.set(MODELS,JSON.stringify(l)); return l; },
+  setModel(m){ LS.set(MODEL,m); },
   key:()=>LS.get(KEY,''), model:()=>LS.get(MODEL,''),
-  async setKey(k,step){ k=String(k||'').trim().replace(/\s+/g,''); const model=await test(k,step); LS.set(KEY,k); LS.set(MODEL,model); return model; },
+  async setKey(k,step){ k=String(k||'').trim().replace(/\s+/g,''); let model=await test(k,step); LS.set(KEY,k); LS.set(MODEL,model);
+    // try the first few models at once and keep whichever answers fastest (the newest one is often the busiest)
+    step?.('빠른 모델 고르는 중');
+    const list=JSON.parse(LS.get(MODELS,'[]')).slice(0,4);
+    const res=await Promise.all(list.map(m=>ping(m).then(ms=>({m,ms})).catch(()=>null)));
+    const best=res.filter(Boolean).sort((a,b)=>a.ms-b.ms)[0];
+    if(best){ model=best.m; LS.set(MODEL,model); }
+    return model; },
+  async pickFastest(){ const list=this.models().slice(0,4); const res=await Promise.all(list.map(m=>ping(m).then(ms=>({m,ms})).catch(()=>null))); const best=res.filter(Boolean).sort((a,b)=>a.ms-b.ms)[0]; if(best) LS.set(MODEL,best.m); return best; },
   clear(){ LS.set(KEY,null); LS.set(MODEL,null); LS.set(MODELS,null); } };
 })();
 </script>
@@ -4437,14 +4455,26 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='10-26 21:34';
+const DESK_BUILD='10-26 21:41';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();
   const p=(t,h)=>{ const x=el('p'); if(h) x.innerHTML=t; else x.textContent=t; x.style.margin='0 0 10px'; return x; };
   const box=el('div','fpick');
   if(A.hasKey()){
-    body.append(p(`켜짐 · 모델 ${A.model()||'자동'}`), p('이 앱에서 AI 요약과 질문이 제미나이로 됩니다. 키는 이 기기에만 저장돼요.'));
+    body.append(p(`켜짐 · 지금 쓰는 모델 ${A.model()||'자동'}`), p('이 앱에서 AI 요약과 질문이 제미나이로 됩니다. 키는 이 기기에만 저장돼요. 느리면 아래에서 속도를 시험해 보고 빠른 모델을 고르세요.'));
+    // model list with a speed test; the chosen one is tried first, the rest stay as spares
+    const ml=el('div','fpick'); body.append(ml);
+    const draw=list=>{ ml.replaceChildren(); for(const m of list){ const row=el('button'); row.style.cssText='display:flex;justify-content:space-between;gap:8px'; if(m===A.model()) row.setAttribute('aria-current','true');
+        const nm=el('span',null,m); const res=el('small',null,m===A.model()?'사용 중':''); res.style.color='var(--muted)'; row.append(nm,res);
+        row.onclick=async()=>{ res.textContent='시험 중…'; try{ const ms=await A.ping(m); res.textContent=`${(ms/1000).toFixed(1)}초 · 이걸로 씀`; A.setModel(m); ml.querySelectorAll('button').forEach(b=>{ b.removeAttribute('aria-current'); const sm=b.querySelector('small'); if(sm&&sm.textContent==='사용 중') sm.textContent=''; }); row.setAttribute('aria-current','true'); toast(`${m} 모델을 씁니다 (${(ms/1000).toFixed(1)}초)`,3000); }catch(e){ res.textContent=e?.code==='busy'?'바쁨':e?.code==='rate_limited'?'한도 참':(e?.message||'실패').slice(0,24); } };
+        ml.append(row); } };
+    const lst=A.models(); if(lst.length) draw(lst); else A.refreshModels().then(draw).catch(()=>{});
+    body.append(p('<small>모델을 누르면 짧은 시험 질문을 보내 응답 시간을 재고, 되면 그 모델로 바꿔요.</small>',true));
+    const fast=el('button','btn btn-ghost','제일 빠른 모델 자동으로 고르기'); fast.style.marginTop='4px';
+    fast.onclick=async()=>{ fast.disabled=true; fast.textContent='여러 모델 시험 중…'; const b=await A.pickFastest().catch(()=>null); fast.disabled=false; fast.textContent='제일 빠른 모델 자동으로 고르기';
+      if(b){ toast(`${b.m} 모델을 씁니다 (${(b.ms/1000).toFixed(1)}초)`,3500); openAiPanel(); } else toast('지금은 모든 모델이 바쁩니다. 잠시 뒤 다시 해 주세요',3500); };
+    body.append(fast);
   } else {
     body.append(p('구글 제미나이의 무료 키를 넣으면 이 앱에서도 AI 요약과 질문이 됩니다. 결제 정보를 등록하지 않으면 돈이 나가지 않고, 무료 한도를 넘으면 잠시 멈출 뿐이에요.'),
       p('<b>키 받는 법</b><br>1. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> 를 열고 구글 계정으로 로그인<br>2. <b>API 키 만들기</b>(Create API key)를 누르기<br>3. 나온 키(AQ. 또는 AIza로 시작)를 복사해서 아래에 붙여넣기',true),

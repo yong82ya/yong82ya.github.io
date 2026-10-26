@@ -3196,6 +3196,7 @@ function textToHtml(t, md){
   }
   close(); return html;
 }
+function looksBroken(t){ const bad=(t.match(/[\uFFFD\u0000]/g)||[]).length; return bad>Math.max(3,t.length*0.02); }
 function decodeText(u8){
   // phones often save text as UTF-16 (with or without a byte-order mark); look for it before trying UTF-8 and the old Korean code page
   if(u8[0]===0xFF&&u8[1]===0xFE) return new TextDecoder('utf-16le').decode(u8.subarray(2));
@@ -3684,7 +3685,13 @@ async function openOtherFile(file){
   const kind = (ext==='xlsx'||ext==='xlsm'||ext==='csv') ? 'sheet' : 'doc';
   const fmt = ext==='markdown'?'md':ext==='text'?'txt':ext==='xlsm'?'xlsx':ext;
   const existing=library.find(m=>m.name===file.name && m.size===file.size && m.kind===kind);
-  if(existing){ if(kind==='doc') return openDocEntry(existing); return openSheetEntry(existing,bytes); }
+  if(existing){
+    if(kind!=='doc') return openSheetEntry(existing,bytes);
+    await openDocEntry(existing);
+    // a text file that was read with the wrong encoding before: read it again and fix the stored copy
+    if((fmt==='txt'||fmt==='md') && looksBroken(paper.innerText)){ const fresh=decodeText(bytes); if(!looksBroken(fresh)){ paper.innerHTML=textToHtml(fresh,fmt==='md'); AI.segs=null; await saveDocContent(true); toast('글자가 깨져 있던 문서를 다시 읽어서 고쳤습니다',4000); } }
+    return;
+  }
   const meta={id:(kind==='doc'?'doc_':'sht_')+rid(),kind,fmt,name:file.name,size:file.size,addedAt:Date.now(),openedAt:Date.now(),orig:null,chunks:0,local:true};
   if(kind==='sheet'){ await openSheetEntry(meta,bytes); }
   else {

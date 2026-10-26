@@ -176,6 +176,9 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .fpick button{text-align:left;padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:15px}
 .fpick button[aria-current="true"]{border-color:var(--accent);color:var(--accent)}
 .fpick input{padding:10px 12px;border-radius:10px;border:1px solid var(--line);font-size:15px;background:var(--surface);color:var(--ink);width:100%}
+.where{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0 8px;padding:4px 10px;border-radius:999px;font-size:13px;font-weight:600;background:var(--accent-weak);color:var(--accent);border:1px solid var(--accent)}
+.where.warn{background:#fff4e0;color:#9a5b00;border-color:#e8b45c}
+.where small{font-weight:500;opacity:.85}
 .shelf-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
 .shelf-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.08em;color:var(--muted)}
 .shelf-head span{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -473,6 +476,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     <header class="masthead">
       <div>
         <h1>문서 작업대</h1>
+        <div class="where" id="whereTag" hidden></div>
         <p>PDF는 펜과 형광펜으로 필기하고, 한글·워드·메모장 문서는 읽고 고치고, 엑셀은 표로 봅니다. 여기서 바로 녹음하면 필기와 함께 다시 볼 수 있고, 내보낸 파일은 바로 공유할 수 있습니다.</p>
       </div>
       <button class="btn btn-ghost deco-btn" id="setBtn" title="설정"><svg class="i"><use href="#i-gear"/></svg>설정</button>
@@ -1071,6 +1075,7 @@ function setStoreLine(){
   else if(cap.db){ dot.className='dot warn'; txt.textContent='필기는 저장되지만, 이 화면에서는 PDF 원본을 보관함에 올릴 수 없습니다'; }
   else { dot.className='dot warn'; txt.textContent='이 화면에서는 보관함을 쓸 수 없습니다 · 필기는 "PDF로 저장"으로 남겨 주세요'; }
 }
+// which copy of 문서 작업대 is this? (each keeps its own library)
 async function loadLibrary(){
   if(!cap.db){ renderShelf(); return; }
   await loadFolders();
@@ -4388,6 +4393,22 @@ function openDrivePanel(){
 }
 if(window.DRIVE){ window.DRIVE.onChange(()=>{ driveLine(); renderInbox(); }); }
 
+// GitHub copy: name the device and the way it is opened, and whether it is tied to Drive
+function whereTag(){
+  const w=$('#whereTag'); if(!w) return; const ua=navigator.userAgent;
+  const ipad=/iPad/.test(ua)||(/Macintosh/.test(ua)&&navigator.maxTouchPoints>1), iphone=/iPhone/.test(ua), android=/Android/.test(ua);
+  const dev=ipad?'아이패드':iphone?'아이폰':android?'폰':'노트북·PC';
+  const app=matchMedia('(display-mode: standalone)').matches||navigator.standalone;
+  const br=/SamsungBrowser/.test(ua)?'삼성 인터넷':/Edg\//.test(ua)?'엣지':/Whale/.test(ua)?'웨일':/CriOS|Chrome/.test(ua)?'크롬':/Firefox|FxiOS/.test(ua)?'파이어폭스':/Safari/.test(ua)?'사파리':'브라우저';
+  const where=app?`${dev} 앱`:`${dev} ${br}`;
+  const on=window.DRIVE?.isOn?.();
+  w.hidden=false; w.className='where'+((!on)||(ipad&&!app)?' warn':'');
+  let note=on?'· 드라이브 연결됨 · 다른 기기와 이어져요':'· 이 기기에만 저장 · 설정에서 드라이브를 연결하세요';
+  if((ipad||iphone)&&!app) note+=' · 홈 화면 앱과 보관함이 따로예요';
+  w.replaceChildren('📍 '+where, el('small',null,note));
+}
+if(window.DRIVE){ window.DRIVE.onChange(()=>whereTag()); }
+
 // Galaxy share menu → 문서 작업대 (the service worker keeps what was shared until the app picks it up)
 async function deskShareIn(){
   if(!/[?&]share=1/.test(location.search)) return;
@@ -4410,7 +4431,7 @@ window.deskShareIn=deskShareIn;
 setTool(V.tool);
 (async()=>{
   await initCaps();
-  setStoreLine(); if(window.DRIVE) driveLine();
+  setStoreLine(); if(window.DRIVE) driveLine(); whereTag();
   loadDeco();
   await loadLibrary();
   deskShareIn();

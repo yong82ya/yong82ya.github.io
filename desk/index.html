@@ -2334,7 +2334,7 @@ function aiError(e){
   return 'AI 응답을 받지 못했습니다. 다시 시도해 주세요.';
 }
 new MutationObserver(()=>$('#viewer').classList.toggle('aiopen',!$('#ai').hidden)).observe($('#ai'),{attributes:true,attributeFilter:['hidden']});
-$('#aiBtn').onclick=async()=>{ const a=$('#ai'); if(AI.src!=='pdf'){ $('#viewer .stage').append(a); AI.src='pdf'; AI.sums=[]; AI.chat=[]; askIntro(); } a.hidden=!a.hidden; if(!a.hidden){ $('#sumFrom').value=V.cur; $('#sumTo').value=Math.min(V.n,V.cur+4); loadSums(); if(!await getSample()){ $('#sumOut').innerHTML='<p class="ai-hint">AI 요약과 질문은 클로드 버전에서 쓸 수 있습니다. <a href="https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ" target="_blank" rel="noopener">클로드 버전 열기</a></p>'; } } };
+$('#aiBtn').onclick=async()=>{ const a=$('#ai'); if(AI.src!=='pdf'){ $('#viewer .stage').append(a); AI.src='pdf'; AI.sums=[]; AI.chat=[]; askIntro(); } a.hidden=!a.hidden; if(!a.hidden){ $('#sumFrom').value=V.cur; $('#sumTo').value=Math.min(V.n,V.cur+4); loadSums(); if(!await getSample()){ noAiHint(); } } };
 $('#aiClose').onclick=()=>$('#ai').hidden=true;
 function aiTab(which){ const sum=which==='sum'; $('#tabSum').setAttribute('aria-selected',String(sum)); $('#tabAsk').setAttribute('aria-selected',String(!sum)); $('#sumPane').hidden=!sum; $('#askPane').hidden=sum; $('#askFoot').hidden=sum; if(!sum){ if(!AI.chat.length) askIntro(); $('#askIn').focus(); } }
 $('#tabSum').onclick=()=>aiTab('sum'); $('#tabAsk').onclick=()=>aiTab('ask');
@@ -3901,7 +3901,7 @@ $('#edExport').onclick=async()=>{
     }
   }catch(e){ hideEditorBusy(); console.warn(e); toast('파일을 만들지 못했습니다. 다시 시도해 주세요.'); }
 };
-$('#edAi').onclick=()=>{ const a=$('#ai'); if(AI.src!=='doc'){ $('#edStage').append(a); AI.src='doc'; AI.sums=[]; AI.chat=[]; askIntro(); } AI.segs=null; a.hidden=!a.hidden; if(!a.hidden){ loadSums(); getSample(); } };
+$('#edAi').onclick=()=>{ const a=$('#ai'); if(AI.src!=='doc'){ $('#edStage').append(a); AI.src='doc'; AI.sums=[]; AI.chat=[]; askIntro(); } AI.segs=null; a.hidden=!a.hidden; if(!a.hidden){ loadSums(); getSample().then(s=>{ if(!s) noAiHint(); }); } };
 
 /* ================= spreadsheet viewer ================= */
 const SH={meta:null, zip:null, sheets:[], cur:0, edits:{}, sel:null, shown:500, saveT:null};
@@ -4276,6 +4276,20 @@ async function openPptx(file){
   storeNewDoc(meta, pdfFile);
 }
 
+function noAiHint(){
+  const o=$('#sumOut'); o.innerHTML='<p class="ai-hint">AI 요약은 클로드 버전에서 됩니다. 아래 버튼을 누르면 이 문서의 글이 복사되고 클로드 버전이 열려요. 거기서 <b>새 문서</b>를 만들고 <b>붙여넣기</b>한 뒤 AI → <b>강의 녹음 정리</b>를 누르세요.</p>';
+  const b=el('button','btn btn-primary','글 복사하고 클로드 버전 열기'); b.style.marginTop='8px'; b.onclick=copyToClaude; o.append(b);
+}
+async function copyToClaude(){
+  let ok=false;
+  try{ let text='';
+    if(AI.src==='doc') text=docSegs().map(s=>s.text).join('\n');
+    else { const parts=[]; for(let i=1;i<=V.n;i++){ const t=await pageText(i); if(t) parts.push(t); } text=parts.join('\n\n'); }
+    text=((AI.src==='doc'?ED.meta?.name:document.querySelector('#docTitle')?.textContent)||'')+'\n\n'+text.trim();
+    await navigator.clipboard.writeText(text); ok=true; toast('글을 복사했습니다. 클로드 버전의 새 문서에 붙여넣으세요',5000);
+  }catch(e){ console.warn(e); toast('복사하지 못했습니다. 문서 글을 직접 선택해서 복사해 주세요',4500); }
+  if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
+}
 /* ================= Google Drive (GitHub Pages copy) ================= */
 window.deskReload=async()=>{ await loadLibrary(); };
 window.deskOpenFile=f=>openLocalFile(f);

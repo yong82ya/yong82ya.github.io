@@ -1025,7 +1025,10 @@ async function sample(input, opts={}){
 sample.limits=async()=>({images:true});
 sample.json=async(input,opts)=>{ const r=await sample((typeof input==='string'?input:input.map(m=>m.content).join('\n'))+'\n\nJSON만 출력해. 설명이나 ``` 표시는 붙이지 마.',opts); const t=r.text.replace(/^```(?:json)?|```$/gm,'').trim(); return JSON.parse(t); };
 
-async function test(key){ const model=await pickModel(key); const r=await fetch(`${API}/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents:[{role:'user',parts:[{text:'"연결됐어요"라고만 답해.'}]}]})}); if(!r.ok) throw await apiErr(r); return model; }
+// a stalled connection should not leave the person waiting forever
+const withTimeout=(p,ms,msg)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej({gemini:true,code:'timeout',message:msg}),ms))]);
+async function test(key){ return withTimeout(testNow(key),30000,'제미나이가 30초 동안 답이 없습니다. 인터넷을 확인하고 다시 눌러 주세요.'); }
+async function testNow(key){ const model=await pickModel(key); const r=await fetch(`${API}/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents:[{role:'user',parts:[{text:'"연결됐어요"라고만 답해.'}]}]})}); if(!r.ok) throw await apiErr(r); return model; }
 
 window.DESK_AI={ hasKey, sample, test,
   key:()=>LS.get(KEY,''), model:()=>LS.get(MODEL,''),
@@ -4417,7 +4420,7 @@ function openAiPanel(){
   const acts=$('#sheetActs'); acts.replaceChildren();
   const close=el('button','btn btn-ghost','닫기'); close.onclick=()=>scrim.hidden=true;
   const save=el('button','btn btn-primary','연결 확인하고 저장');
-  save.onclick=async()=>{ const k=inp.value.trim(); if(!k){ toast('키를 붙여넣어 주세요'); return; } save.disabled=true; save.textContent='확인 중…';
+  save.onclick=async()=>{ const k=inp.value.trim(); if(!k){ toast('키를 붙여넣어 주세요'); return; } save.disabled=true; save.textContent='확인 중… (보통 10초 안쪽)';
     try{ const m=await A.setKey(k); toast(`제미나이 연결됨 · ${m}`,3500); scrim.hidden=true; samp=null; }
     catch(e){ toast(e?.message||'키를 확인하지 못했습니다',4500); }
     finally{ save.disabled=false; save.textContent='연결 확인하고 저장'; } };

@@ -2502,28 +2502,57 @@ async function summarize(){
     const {parts,total,empty}=await collect(pages);
     const head=`문서 "${aiName()}"의 ${label}이다. ${RULES}\n\n`;
     let text='';
-    if(empty===pages.length && AI.src==='pdf'){
-      // scanned pages: send page images when this view allows it
-      const lim=sampLimits?.images; if(!lim) throw {code:'_scan'};
-      if(pages.length>lim.maxCount) throw {code:'_scanmany',n:lim.maxCount};
+    // scanned pages (no text layer) go as page pictures when this view allows it
+    const lim=sampLimits?.images; const canImg=AI.src==='pdf' && !!lim;
+    if(empty===pages.length && AI.src==='pdf' && !canImg) throw {code:'_scan'};
+    const gem=!!window.DESK_AI;                        // free Gemini: smaller bites answer much faster
+    const ONE=gem?80000:180000, CH=gem?60000:150000, IMG=Math.max(1,Math.min(lim?.maxCount||6, gem?6:20));
+    const scanned=new Set(canImg?parts.filter(p=>bytes(p.seg)-bytes(`[p.${p.pg}]\n\n`)<25).map(p=>p.pg):[]);
+    const allText=!scanned.size;
+    if(allText && total<ONE){
+      const r=await sample(head+parts.map(p=>p.seg).join('\n')+'\n\n'+STYLE[style],{signal:ctl.signal,onText:u=>{ out.innerHTML=md(u.text); }});
+      text=r.text;
+    } else if(!allText && pages.length<=IMG && scanned.size===pages.length){
       out.innerHTML='<p class="ai-hint">스캔본이라 페이지 그림을 보내는 중</p>';
       const imgs=[]; for(const p of pages) imgs.push(await pageJpeg(p));
       const r=await sample(`첨부한 그림은 문서 "${aiName()}"의 ${label}을 순서대로 찍은 것이다. ${RULES}\n\n${STYLE[style]}`,{images:imgs,signal:ctl.signal,onText:u=>{ out.innerHTML=md(u.text); }});
       text=r.text;
-    } else if(total < 180000){
-      const r=await sample(head+parts.map(p=>p.seg).join('\n')+'\n\n'+STYLE[style],{signal:ctl.signal,onText:u=>{ out.innerHTML=md(u.text); }});
-      text=r.text;
     } else {
-      // long range: summarize in chunks quickly, then combine
-      const chunks=[]; let cur=[], len=0; for(const p of parts){ if(len+p.len>150000 && cur.length){ chunks.push(cur); cur=[]; len=0; } cur.push(p); len+=p.len; } if(cur.length) chunks.push(cur);
-      const notes=[];
-      for(let i=0;i<chunks.length;i++){
-        out.innerHTML=`<p class="ai-hint">긴 범위라 나눠서 읽는 중 ${i+1}/${chunks.length}</p>`;
-        const c=chunks[i]; const r=await sample(`문서 "${aiName()}"의 p.${c[0].pg}~p.${c[c.length-1].pg} 부분이다. ${RULES}\n\n`+c.map(p=>p.seg).join('\n')+'\n\n이 부분의 핵심을 쪽 표시 (p.N)와 함께 빠짐없이 개조식으로 정리해.',{signal:ctl.signal,modelTier:'quick'});
-        notes.push(r.text);
+      // long range: read it in pieces (text by size, scanned pages a few pictures at a time), then combine
+      const units=[]; let cur=null;
+      for(const p of parts){ const img=scanned.has(p.pg);
+        if(!img && p.len<40 && !cur) continue;
+        const full = cur && (cur.img!==img || (img ? cur.parts.length>=IMG : cur.len+p.len>CH));
+        if(!cur || full){ cur={img,parts:[],len:0}; units.push(cur); }
+        cur.parts.push(p); cur.len+=p.len; }
+      const notes=[], miss=[];
+      const show=(i)=>{ out.innerHTML=`<p class="ai-hint">${pages.length}쪽이라 나눠서 읽는 중 ${i}/${units.length}${miss.length?` · 못 읽은 부분 ${miss.length}`:''}</p>`; };
+      for(let i=0;i<units.length;i++){
+        show(i+1); const u=units[i]; const a=u.parts[0].pg, z=u.parts[u.parts.length-1].pg;
+        const ask=`이 부분의 핵심을 쪽 표시 (p.N)와 함께 빠짐없이 개조식으로 정리해.`;
+        let done=false;
+        for(let k=0;k<2 && !done;k++){
+          try{
+            let r;
+            if(u.img){ const imgs=[]; for(const p of u.parts) imgs.push(await pageJpeg(p.pg)); show(i+1);
+              r=await sample(`첨부한 그림은 문서 "${aiName()}"의 p.${a}~p.${z}을 순서대로 찍은 것이다. ${RULES}\n\n${ask}`,{images:imgs,signal:ctl.signal,modelTier:'quick'}); }
+            else r=await sample(`문서 "${aiName()}"의 p.${a}~p.${z} 부분이다. ${RULES}\n\n`+u.parts.map(p=>p.seg).join('\n')+'\n\n'+ask,{signal:ctl.signal,modelTier:'quick'});
+            if(r.text.trim()){ notes.push(`[p.${a}~p.${z}]\n`+r.text); done=true; }
+          }catch(e){ if(ctl.signal.aborted||e?.code==='cancelled'||e?.code==='bad_key'||e?.code==='not_granted') throw e; console.warn('part',a,z,e);
+            // free quota is counted per minute: wait a little before trying this piece again
+            if(k===0){ for(let w=gem?20:5;w>0 && !ctl.signal.aborted;w--){ out.innerHTML=`<p class="ai-hint">AI가 잠깐 바빠서 ${w}초 뒤 p.${a}~${z}을 다시 읽습니다 (${i+1}/${units.length})</p>`; await new Promise(r=>setTimeout(r,1000)); } }
+          }
+        }
+        if(!done) miss.push(a===z?`p.${a}`:`p.${a}~${z}`);
       }
-      const r=await sample(`다음은 문서 "${aiName()}" ${label}을 부분별로 정리한 노트다. ${RULES}\n\n${notes.join('\n\n---\n\n')}\n\n이 노트를 바탕으로 문서 전체를 하나로 정리해. ${STYLE[style]}`,{signal:ctl.signal,onText:u=>{ out.innerHTML=md(u.text); }});
-      text=r.text;
+      if(!notes.length) throw {gemini:true,code:'timeout',message:'AI가 계속 답하지 않아 요약하지 못했습니다. 잠시 뒤 다시 하거나 쪽 범위를 줄여 주세요.'};
+      out.innerHTML='<p class="ai-hint">부분 정리를 하나로 묶는 중</p>';
+      let r=null;
+      try{ r=await sample(`다음은 문서 "${aiName()}" ${label}을 부분별로 정리한 노트다. ${RULES}\n\n${notes.join('\n\n---\n\n')}\n\n이 노트를 바탕으로 문서 전체를 하나로 정리해. ${STYLE[style]}`,{signal:ctl.signal,onText:u=>{ out.innerHTML=md(u.text); }}); }
+      catch(e){ if(ctl.signal.aborted||e?.code==='cancelled') throw e; console.warn('combine',e); }
+      // if combining fails, the part notes are still a usable summary
+      text = r?.text?.trim() ? r.text : '## 부분별 정리\n\n'+notes.join('\n\n');
+      if(miss.length) text+=`\n\n> AI가 답하지 않아 빠진 부분: ${miss.join(', ')} — 그 범위만 따로 다시 요약해 주세요.`;
     }
     out.innerHTML=md(text); bindPg(out); AI.last=text; AI.lastStyle=style; $('#sumActs').hidden=false;
     const rec={id:'s'+rid(),label,style,text,at:Date.now()}; AI.sums.unshift(rec); renderSums();
@@ -4474,7 +4503,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='10-27 12:08';
+const DESK_BUILD='10-27 12:13';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();

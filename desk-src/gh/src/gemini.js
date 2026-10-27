@@ -40,21 +40,44 @@ async function sample(input, opts={}){
   const msgs=typeof input==='string'?[{role:'user',content:input}]:input;
   const contents=msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:String(m.content||'')}]}));
   if(opts.images?.length){ const last=contents[contents.length-1]; for(const im of opts.images) last.parts.push({inline_data:{mime_type:im.type||'image/jpeg',data:await b64(im)}}); }
-  const ctl=new AbortController(); if(opts.signal){ if(opts.signal.aborted) ctl.abort(); else opts.signal.addEventListener('abort',()=>ctl.abort(),{once:true}); }
+  if(opts.signal?.aborted) throw {code:'cancelled'};
+  let ctl=null; const onStop=()=>ctl?.abort('stop'); opts.signal?.addEventListener('abort',onStop,{once:true});
   const ver=m=>{ const x=m.match(/gemini-(\d+(?:\.\d+)?)/); return x?parseFloat(x[1]):0; };
   const think=m=>ver(m)>=3?{thinkingConfig:{thinkingLevel:'low'}}:(/2\.5-flash/.test(m)?{thinkingConfig:{thinkingBudget:0}}:null);
   const noThink=new Set();
   // while nothing has come back yet, show that it is working
   const t0=Date.now(); let got=false; const tick=setInterval(()=>{ if(!got) opts.onText?.({text:`*제미나이가 읽고 생각하는 중… ${Math.round((Date.now()-t0)/1000)}초*`,delta:''}); },1000);
   try{
-  let r=null, lastErr=null;
-  for(let t=0;t<tries.length;t++){ model=tries[t];
-    let first=false; const wd=setTimeout(()=>{ if(!first) ctl.abort('slow'); },90000);
+  let r=null, lastErr=null, text='', stop='', slow=0;
+  const WAIT=60000, STALL=45000;
+  for(let t=0;t<tries.length;t++){ model=tries[t]; text=''; stop='';
+    ctl=new AbortController(); let wd=setTimeout(()=>ctl.abort('slow'),WAIT);
     const gc=noThink.has(model)?null:think(model);
     try{ r=await fetch(`${API}/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(gc?{contents,generationConfig:gc}:{contents}),signal:ctl.signal}); }
-    catch(e){ clearTimeout(wd); if(ctl.signal.reason==='slow') throw {gemini:true,code:'timeout',message:'제미나이가 90초 동안 답하지 않았습니다. 잠시 뒤 다시 해 주세요.'}; if(opts.signal?.aborted) throw e; throw {gemini:true,code:'error',message:'제미나이에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.'}; }
-    first=true; clearTimeout(wd);
-    if(r.ok) break;
+    catch(e){ clearTimeout(wd); r=null;
+      if(opts.signal?.aborted) throw {code:'cancelled'};
+      if(ctl.signal.reason==='slow'){ slow++; lastErr={gemini:true,code:'timeout',message:'제미나이 모델들이 모두 1분 넘게 답하지 않았습니다. 구글 쪽이 붐비는 때라 잠시 뒤 다시 해 주세요. 범위를 줄이면 더 빨리 됩니다.'}; if(t+1<tries.length) opts.onText?.({text:'*이 모델이 너무 느려서 다른 제미나이 모델로 바꾸는 중…*',delta:''}); continue; }
+      throw {gemini:true,code:'error',message:'제미나이에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.'}; }
+    clearTimeout(wd);
+    if(r.ok){
+      // read the answer; if it stops coming before any text arrives, move on to the next model
+      got=true;
+      const rd=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+      const arm=()=>{ clearTimeout(wd); wd=setTimeout(()=>ctl.abort('stall'),text?STALL:WAIT); }; arm();
+      try{
+        for(;;){ const {value,done}=await rd.read(); if(done) break; buf+=dec.decode(value,{stream:true}); arm();
+          let i; while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i).trim(); buf=buf.slice(i+1); if(!line.startsWith('data:')) continue;
+            try{ const j=JSON.parse(line.slice(5)); const c=j.candidates?.[0]; const d=(c?.content?.parts||[]).map(p=>p.text||'').join(''); if(c?.finishReason) stop=c.finishReason; if(d){ text+=d; opts.onText?.({text,delta:d}); } }catch{} } }
+      }catch(e){
+        clearTimeout(wd);
+        if(opts.signal?.aborted) throw {code:'cancelled',text};
+        if(text){ stop='STALL'; }
+        else { got=false; r=null; slow++; lastErr={gemini:true,code:'timeout',message:'제미나이 모델들이 모두 1분 넘게 답하지 않았습니다. 구글 쪽이 붐비는 때라 잠시 뒤 다시 해 주세요. 범위를 줄이면 더 빨리 됩니다.'}; if(t+1<tries.length) opts.onText?.({text:'*답이 멈춰서 다른 제미나이 모델로 바꾸는 중…*',delta:''}); continue; }
+      }
+      clearTimeout(wd);
+      if(slow) LS.set(MODEL,model);   // remember the one that answered
+      break;
+    }
     lastErr=await apiErr(r); r=null;
     if(gc && r===null && /thinking/i.test(lastErr.message)){ noThink.add(model); t--; continue; }
     if(lastErr.code==='bad_key') throw lastErr;
@@ -62,14 +85,10 @@ async function sample(input, opts={}){
     throw lastErr;
   }
   if(!r) throw lastErr||{gemini:true,code:'error',message:'제미나이가 답하지 못했습니다'};
-  got=true;
-  const rd=r.body.getReader(); const dec=new TextDecoder(); let buf='', text='', stop='';
-  for(;;){ const {value,done}=await rd.read(); if(done) break; buf+=dec.decode(value,{stream:true});
-    let i; while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i).trim(); buf=buf.slice(i+1); if(!line.startsWith('data:')) continue;
-      try{ const j=JSON.parse(line.slice(5)); const c=j.candidates?.[0]; const d=(c?.content?.parts||[]).map(p=>p.text||'').join(''); if(c?.finishReason) stop=c.finishReason; if(d){ text+=d; opts.onText?.({text,delta:d}); } }catch{} } }
+  if(stop==='STALL') throw {gemini:true,code:'timeout',text,message:'제미나이 답이 중간에 끊겼습니다. 여기까지 받은 내용만 보여 드려요.'};
   if(!text && stop==='SAFETY') throw {gemini:true,code:'error',message:'제미나이가 이 내용에는 답하지 않았습니다'};
   return {text, truncated:stop==='MAX_TOKENS', modelApplied:model};
-  } finally { clearInterval(tick); }
+  } finally { clearInterval(tick); opts.signal?.removeEventListener('abort',onStop); }
 }
 sample.limits=async()=>({images:true});
 sample.json=async(input,opts)=>{ const r=await sample((typeof input==='string'?input:input.map(m=>m.content).join('\n'))+'\n\nJSON만 출력해. 설명이나 ``` 표시는 붙이지 마.',opts); const t=r.text.replace(/^```(?:json)?|```$/gm,'').trim(); return JSON.parse(t); };

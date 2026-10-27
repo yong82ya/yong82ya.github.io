@@ -1,5 +1,6 @@
 /* ================= Google Drive (GitHub Pages copy) ================= */
 window.deskReload=async()=>{ await loadLibrary(); };
+window.deskToast=(m,ms)=>toast(m,ms);
 window.deskOpenFile=f=>openLocalFile(f);
 window.deskBundle=fl=>bundleImages(fl);
 window.deskBusyIds=()=>[V.meta?.id, ED.meta?.id, SH.meta?.id].filter(Boolean);

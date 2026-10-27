@@ -17,13 +17,15 @@ const on=()=>!!ls.get('desk.drive.on',false);
 /* ---------- sign-in (Google Identity Services token client) ---------- */
 let gisP=null;
 function loadGis(){ if(window.google?.accounts?.oauth2) return Promise.resolve(); if(!gisP) gisP=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://accounts.google.com/gsi/client'; s.async=true; s.onload=()=>res(); s.onerror=()=>{ gisP=null; rej(new Error('구글 로그인 도구를 불러오지 못했습니다')); }; document.head.append(s); }); return gisP; }
-function tokenOk(){ if(S.token && Date.now()<S.exp-60000) return true; const t=ss.get('desk.drive.tok'); if(t && Date.now()<t.exp-60000){ S.token=t.token; S.exp=t.exp; return true; } return false; }
+function tokenOk(){ if(S.token && Date.now()<S.exp-60000) return true; const t=ls.get('desk.drive.tok',null); if(t && Date.now()<t.exp-60000){ S.token=t.token; S.exp=t.exp; return true; } return false; }
 // interactive: must run from a tap (it opens Google's window)
-async function signIn(){
+let signing=null;   // one Google window at a time, even if two taps ask
+function signIn(){ if(!signing) signing=signIn1().finally(()=>{ signing=null; }); return signing; }
+async function signIn1(){
   await loadGis();
   return new Promise((res,rej)=>{
     const tc=google.accounts.oauth2.initTokenClient({ client_id:CLIENT_ID, scope:SCOPE, prompt:on()?'':'consent',
-      callback:r=>{ if(r.error){ rej(new Error(r.error)); return; } S.token=r.access_token; S.exp=Date.now()+(+r.expires_in||3600)*1000; ss.set('desk.drive.tok',{token:S.token,exp:S.exp}); ls.set('desk.drive.on',true); S.err=null; res(S.token); },
+      callback:r=>{ if(r.error){ rej(new Error(r.error)); return; } S.token=r.access_token; S.exp=Date.now()+(+r.expires_in||3600)*1000; ls.set('desk.drive.tok',{token:S.token,exp:S.exp}); ls.set('desk.drive.on',true); S.err=null; res(S.token); },
       error_callback:e=>rej(new Error(e?.type==='popup_closed'?'로그인 창이 닫혔습니다':'구글 로그인에 실패했습니다')) });
     tc.requestAccessToken();
   });
@@ -31,7 +33,7 @@ async function signIn(){
 async function api(method,url,body,headers){
   if(!tokenOk()) throw Object.assign(new Error('auth'),{code:'auth'});
   const r=await fetch(url,{method,headers:{Authorization:'Bearer '+S.token,...(headers||{})},body});
-  if(r.status===401){ S.token=null; ss.set('desk.drive.tok',null); throw Object.assign(new Error('auth'),{code:'auth'}); }
+  if(r.status===401){ S.token=null; ls.set('desk.drive.tok',null); throw Object.assign(new Error('auth'),{code:'auth'}); }
   if(!r.ok){ let t=''; try{ t=await r.text(); }catch{} throw new Error(`드라이브 오류 ${r.status} ${t.slice(0,160)}`); }
   return r;
 }
@@ -155,8 +157,21 @@ async function importInboxNow(ids){
 // first connection on this device: everything already here goes up too
 async function seed(){ if(ls.get('desk.drive.seeded',false)) return; try{ const snap=await DESK.db.collection('data/users/me').get(); const d=DESK.raw.loadDirty(); const t=Date.now(); for(const x of snap.docs) if(!d[x.id]) d[x.id]=t; DESK.raw.saveDirty(d); ls.set('desk.drive.seeded',true); }catch(e){ console.warn('seed',e); } }
 async function connect(){ await signIn(); await seed(); try{ const u=await J(await api('GET',`${API}/about?fields=user(emailAddress)`)); S.email=u.user?.emailAddress||''; ls.set('desk.drive.email',S.email); }catch{} emit(); await sync(); }
-function disconnect(){ try{ if(S.token) google?.accounts?.oauth2?.revoke?.(S.token,()=>{}); }catch{} S.token=null; ss.set('desk.drive.tok',null); ls.set('desk.drive.on',false); ls.set('desk.drive.folders',null); ls.set('desk.drive.seeded',false); S.folders=null; S.inbox=[]; emit(); }
+function disconnect(){ try{ if(S.token) google?.accounts?.oauth2?.revoke?.(S.token,()=>{}); }catch{} S.token=null; ls.set('desk.drive.tok',null); ls.set('desk.drive.on',false); ls.set('desk.drive.folders',null); ls.set('desk.drive.seeded',false); S.folders=null; S.inbox=[]; emit(); }
 
+// Google's login lasts an hour and a new one can only be asked for from a tap.
+// So when it has run out (or is about to), the next tap anywhere quietly renews it and syncs —
+// the person no longer has to notice the warning line and press it.
+let renewAt=0;
+document.addEventListener('click',()=>{
+  if(!on() || Date.now()-renewAt<60000) return;
+  const ok=tokenOk(); if(ok && S.exp-Date.now()>10*60000) return;
+  if(!window.google?.accounts?.oauth2){ loadGis().catch(()=>{}); return; }   // not loaded yet: the tap after this one will do it
+  renewAt=Date.now();
+  signIn().then(()=>{ S.err=null; emit(); if(!ok) window.deskToast?.('구글 드라이브와 다시 연결해서 맞추는 중이에요',3000); sync(); }).catch(()=>{ if(!tokenOk()){ S.err='auth'; emit(); } });
+},true);
+// have Google's login script ready so the renewing tap can open it straight away
+window.addEventListener('load',()=>{ if(on()) loadGis().catch(()=>{}); });
 window.DRIVE={ connect, disconnect, sync, importInbox, fetchBlob, kindOf:inboxKind, state:S, isOn:on, tokenOk, onChange(f){ S.listeners.add(f); return ()=>S.listeners.delete(f); },
   reconnect:()=>signIn().then(()=>sync()) };
 // keep in step: shortly after changes, every couple of minutes, and when the app comes back to the front

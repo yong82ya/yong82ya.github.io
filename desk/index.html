@@ -2434,11 +2434,11 @@ async function pageText(pg){
   for(const it of tc.items){ if(!('str' in it)) continue; out+=it.str; out+= it.hasEOL ? '\n' : (it.str && !/\s$/.test(it.str) ? ' ' : ''); }
   out=out.replace(/[ \t]+/g,' ').replace(/\n\s*\n+/g,'\n').trim(); AI.text.set(pg,out); return out;
 }
-async function pageJpeg(pg){
-  const page=await V.pdf.getPage(pg); const v1=page.getViewport({scale:1}); const sc=Math.min(1600/v1.width, 2.2);
+async function pageJpeg(pg, W=1600, Q=0.82){
+  const page=await V.pdf.getPage(pg); const v1=page.getViewport({scale:1}); const sc=Math.min(W/v1.width, 2.2);
   const vp=page.getViewport({scale:sc}); const cv=document.createElement('canvas'); cv.width=Math.round(vp.width); cv.height=Math.round(vp.height);
   const ctx=cv.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height); await page.render({canvasContext:ctx,canvas:cv,viewport:vp}).promise;
-  const b=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.82)); cv.width=cv.height=0; return b;
+  const b=await new Promise(r=>cv.toBlob(r,'image/jpeg',Q)); cv.width=cv.height=0; return b;
 }
 const enc=new TextEncoder(); const bytes=t=>enc.encode(t).length;
 function esc(t){ return t.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -2535,7 +2535,7 @@ async function summarize(){
         for(let k=0;k<2 && !done;k++){
           try{
             let r;
-            if(u.img){ const imgs=[]; for(const p of u.parts) imgs.push(await pageJpeg(p.pg)); show(i+1);
+            if(u.img){ const imgs=[]; for(const p of u.parts) imgs.push(gem?await pageJpeg(p.pg,1200,0.72):await pageJpeg(p.pg)); show(i+1);
               r=await sample(`첨부한 그림은 문서 "${aiName()}"의 p.${a}~p.${z}을 순서대로 찍은 것이다. ${RULES}\n\n${ask}`,{images:imgs,signal:ctl.signal,modelTier:'quick'}); }
             else r=await sample(`문서 "${aiName()}"의 p.${a}~p.${z} 부분이다. ${RULES}\n\n`+u.parts.map(p=>p.seg).join('\n')+'\n\n'+ask,{signal:ctl.signal,modelTier:'quick'});
             if(r.text.trim()){ notes.push(`[p.${a}~p.${z}]\n`+r.text); done=true; }
@@ -4504,7 +4504,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='10-27 12:16';
+const DESK_BUILD='10-27 12:17';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();

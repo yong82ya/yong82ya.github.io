@@ -2014,11 +2014,17 @@ function aiCur(){ if(AI.src!=='doc') return V.cur; const segs=docSegs(); const t
 function aiGo(n){ if(AI.src==='doc'){ const s=docSegs()[n-1]; s?.el.scrollIntoView({behavior:'smooth',block:'start'}); return; } goToPage(n,true); }
 let samp=null, sampLimits=null;
 async function getSample(){ if(samp) return samp; samp=await useCap('sample'); if(samp) sampLimits=await samp.limits().catch(()=>null); return samp; }
+// page.getTextContent() loops over a stream with `for await`, which iPad Safari cannot do; read the stream by hand
+async function pdfText(page){
+  const rd=page.streamTextContent().getReader(); const items=[];
+  for(;;){ const {value,done}=await rd.read(); if(done) break; if(value?.items) for(let i=0;i<value.items.length;i++) items.push(value.items[i]); }
+  return {items};
+}
 async function pageText(pg){
   if(AI.src==='doc') return docSegs()[pg-1]?.text.trim()||'';
   if(V.meta?.texts?.[pg-1]!=null) return V.meta.texts[pg-1];
   if(AI.text.has(pg)) return AI.text.get(pg);
-  const page=await V.pdf.getPage(pg); const tc=await page.getTextContent(); let out='';
+  const page=await V.pdf.getPage(pg); const tc=await pdfText(page); let out='';
   for(const it of tc.items){ if(!('str' in it)) continue; out+=it.str; out+= it.hasEOL ? '\n' : (it.str && !/\s$/.test(it.str) ? ' ' : ''); }
   out=out.replace(/[ \t]+/g,' ').replace(/\n\s*\n+/g,'\n').trim(); AI.text.set(pg,out); return out;
 }

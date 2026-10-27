@@ -2135,7 +2135,15 @@ async function summarize(){
       const saved=new Map();
       if(keep){ try{ const snap=await docRef(am.id).collection('ai').get(); for(const d of snap.docs){ const x=d.data(); if(x.kind==='part' && x.text) saved.set(d.id,x.text); } }catch{} }
       let reused=0; units.forEach((u,i)=>{ const t=saved.get(pkey(u)); if(t){ res[i]=t; fin++; reused++; } });
-      const show=()=>{ put(`<p class="ai-hint">${pages.length}쪽을 ${units.length}조각으로 나눠 읽는 중 · ${fin}/${units.length} 끝남${reused?` (앞에서 읽어 둔 ${reused}조각 포함)`:''}${missAt.length?` · 못 읽은 조각 ${missAt.length}`:''}${busyMsg?'<br>'+busyMsg:''}<br><small>보관함으로 나가도 계속 읽어요. 앱을 닫거나 다른 앱으로 가면 멈추지만, 끝난 조각은 저장돼서 다시 누르면 이어서 읽어요.</small></p>`); };
+      // pieces already read are shown right away, in page order, while the rest is still being read
+      const partsHtml=()=>{ let h=''; const wait=[]; units.forEach((u,i)=>{ const a=u.parts[0].pg, z=u.parts[u.parts.length-1].pg;
+          if(res[i]) h+=md(`## p.${a}~${z}\n`+res[i].replace(/^\[p\.\d+~p\.\d+\]\n/,''));
+          else if(missAt.includes(i)) h+=`<p class="ai-hint">p.${a}~${z}: AI가 답하지 않아 건너뜀</p>`;
+          else wait.push(`p.${a}~${z}`); });
+        if(wait.length) h+=`<p class="ai-hint">아직 읽는 중: ${wait.join(', ')}</p>`; return h; };
+      const paint=h=>{ if(!here()) return; out.innerHTML=h; bindPg(out); };
+      const show=()=>{ paint(partsHead()+partsHtml()); };
+      const partsHead=()=>(`<p class="ai-hint">${pages.length}쪽을 ${units.length}조각으로 나눠 읽는 중 · ${fin}/${units.length} 끝남${reused?` (앞에서 읽어 둔 ${reused}조각 포함)`:''}${missAt.length?` · 못 읽은 조각 ${missAt.length}`:''}${busyMsg?'<br>'+busyMsg:''}<br><small>먼저 읽은 부분부터 아래에 바로 보여요. 다 읽으면 하나로 묶은 정리로 바뀌어요. 보관함으로 나가도 계속 읽고, 앱을 닫아도 끝난 조각은 저장돼요.</small></p>`);
       // a few pieces at a time: much faster, and still inside the free per-minute allowance
       const PAR=Math.min(3,units.length); let next=0;
       const work=async()=>{ for(;;){ const i=next++; if(i>=units.length) return;
@@ -2169,9 +2177,10 @@ async function summarize(){
       const notes=res.filter(Boolean);
       const miss=missAt.sort((x,y)=>x-y).map(i=>{ const u=units[i]; const a=u.parts[0].pg, z=u.parts[u.parts.length-1].pg; return a===z?`p.${a}`:`p.${a}~${z}`; });
       if(!notes.length) throw {gemini:true,code:'timeout',message:'AI가 계속 답하지 않아 요약하지 못했습니다. 잠시 뒤 다시 하거나 쪽 범위를 줄여 주세요.'};
-      put('<p class="ai-hint">부분 정리를 하나로 묶는 중</p>');
+      paint('<p class="ai-hint">조각을 다 읽었어요. 하나로 묶는 중… (그동안 아래 조각별 정리를 먼저 보세요)</p>'+partsHtml());
+      let firstTok=true;
       let r=null;
-      try{ r=await sample(`다음은 문서 "${J.name}" ${label}을 부분별로 정리한 노트다. ${RULES}\n\n${notes.join('\n\n---\n\n')}\n\n이 노트를 바탕으로 문서 전체를 하나로 정리해. ${STYLE[style]}`,{signal:ctl.signal,onText:u=>{ put(md(u.text)); }}); }
+      try{ r=await sample(`다음은 문서 "${J.name}" ${label}을 부분별로 정리한 노트다. ${RULES}\n\n${notes.join('\n\n---\n\n')}\n\n이 노트를 바탕으로 문서 전체를 하나로 정리해. ${STYLE[style]}`,{signal:ctl.signal,onText:u=>{ if(!u.delta && firstTok) return; firstTok=false; put(md(u.text)); }}); }
       catch(e){ if(ctl.signal.aborted||e?.code==='cancelled') throw e; console.warn('combine',e); }
       // if combining fails, the part notes are still a usable summary
       text = r?.text?.trim() ? r.text : '## 부분별 정리\n\n'+notes.join('\n\n');

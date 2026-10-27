@@ -1582,7 +1582,8 @@ function closeViewerState(){
   V.pages=[]; V.ink=new Map(); V.chunks=new Map(); V.dirty.clear(); V.undo=[]; V.redo=[];
   flushMemos(); closePlayer(); AI.text=new Map(); AI.chat=[]; AI.sums=[]; $('#ai').hidden=true; $('#askPane').replaceChildren(); $('#sumOut').innerHTML='<p class="ai-hint">범위와 정리 방식을 고르고 "요약하기"를 누르세요. 쪽 번호를 누르면 그 쪽으로 이동합니다.</p>'; $('#sumActs').hidden=true; RC.list=[]; RC.local=new Map(); updRecBadge(); V.memos=[]; $('#memoLayer').replaceChildren();
   $('#pages').replaceChildren();
-  try{ V.pdf?.destroy(); }catch{}
+  if(AI.job?.pdf && AI.job.pdf===V.pdf) AI.job.ownsPdf=true;   // still being summarized: the job closes it when done
+  else { try{ V.pdf?.destroy(); }catch{} }
   V.pdf=null;
 }
 async function fetchAllSizes(pdf){
@@ -2020,16 +2021,17 @@ async function pdfText(page){
   for(;;){ const {value,done}=await rd.read(); if(done) break; if(value?.items) for(let i=0;i<value.items.length;i++) items.push(value.items[i]); }
   return {items};
 }
-async function pageText(pg){
-  if(AI.src==='doc') return docSegs()[pg-1]?.text.trim()||'';
-  if(V.meta?.texts?.[pg-1]!=null) return V.meta.texts[pg-1];
-  if(AI.text.has(pg)) return AI.text.get(pg);
-  const page=await V.pdf.getPage(pg); const tc=await pdfText(page); let out='';
+async function pageText(pg,J){
+  const src=J?.src||AI.src, meta=J?J.meta:V.meta, pdf=J?.pdf||V.pdf, cache=J?.text||AI.text;
+  if(src==='doc') return docSegs()[pg-1]?.text.trim()||'';
+  if(meta?.texts?.[pg-1]!=null) return meta.texts[pg-1];
+  if(cache.has(pg)) return cache.get(pg);
+  const page=await pdf.getPage(pg); const tc=await pdfText(page); let out='';
   for(const it of tc.items){ if(!('str' in it)) continue; out+=it.str; out+= it.hasEOL ? '\n' : (it.str && !/\s$/.test(it.str) ? ' ' : ''); }
-  out=out.replace(/[ \t]+/g,' ').replace(/\n\s*\n+/g,'\n').trim(); AI.text.set(pg,out); return out;
+  out=out.replace(/[ \t]+/g,' ').replace(/\n\s*\n+/g,'\n').trim(); cache.set(pg,out); return out;
 }
-async function pageJpeg(pg, W=1600, Q=0.82){
-  const page=await V.pdf.getPage(pg); const v1=page.getViewport({scale:1}); const sc=Math.min(W/v1.width, 2.2);
+async function pageJpeg(pg, W=1600, Q=0.82, J){
+  const page=await (J?.pdf||V.pdf).getPage(pg); const v1=page.getViewport({scale:1}); const sc=Math.min(W/v1.width, 2.2);
   const vp=page.getViewport({scale:sc}); const cv=document.createElement('canvas'); cv.width=Math.round(vp.width); cv.height=Math.round(vp.height);
   const ctx=cv.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height); await page.render({canvasContext:ctx,canvas:cv,viewport:vp}).promise;
   const b=await new Promise(r=>cv.toBlob(r,'image/jpeg',Q)); cv.width=cv.height=0; return b;
@@ -2078,8 +2080,8 @@ const STYLE={
   short:'전체 흐름을 3~5문장의 한 문단으로 요약해 줘. 마지막 줄에 다룬 쪽 범위를 적어.',
 };
 const RULES='문서에 없는 내용은 지어내지 마. 원문이 영어여도 한국어로 답해. 각 쪽 내용은 [p.N] 표시 뒤에 이어진다.';
-async function collect(pages, cap){ const parts=[]; let total=0, empty=0;
-  for(const pg of pages){ const t=await pageText(pg); if(t.length<25) empty++; const seg=`[p.${pg}]\n${t}\n`; parts.push({pg,seg,len:bytes(seg)}); total+=bytes(seg); }
+async function collect(pages, cap, J){ const parts=[]; let total=0, empty=0;
+  for(const pg of pages){ const t=await pageText(pg,J); if(t.length<25) empty++; const seg=`[p.${pg}]\n${t}\n`; parts.push({pg,seg,len:bytes(seg)}); total+=bytes(seg); }
   return {parts,total,empty}; }
 $('#sumGo').onclick=summarize;
 async function summarize(){
@@ -2091,11 +2093,16 @@ async function summarize(){
   const unit=AI.src==='doc'?'구간':'쪽'; const label = AI.src==='doc' && scope==='all' ? '전체' : from===to ? `${from}${unit}` : `${from}~${to}${unit}`;
   const style=$('#sumStyle').value; const out=$('#sumOut'); $('#sumActs').hidden=true;
   const ctl=new AbortController(); AI.busy=ctl; $('#sumGo').textContent='멈추기';
-  out.innerHTML='<p class="ai-hint">글자를 읽는 중</p>';
+  // the job keeps its own copy of the PDF, so it can finish after the person goes back to the shelf
+  const J={pdf:AI.src==='pdf'?V.pdf:null, meta:AI.src==='doc'?ED.meta:V.meta, text:AI.text, name:aiName(), src:AI.src, ctl, bg:false};
+  AI.job=J;
+  const here=()=>!J.bg || (AI.src===J.src && !!J.meta?.id && (J.src==='pdf'?V.meta:ED.meta)?.id===J.meta.id);
+  const put=h=>{ if(here()) out.innerHTML=h; };
+  put('<p class="ai-hint">글자를 읽는 중</p>');
   try{
     const pages=[]; for(let p=from;p<=to;p++) pages.push(p);
-    const {parts,total,empty}=await collect(pages);
-    const head=`문서 "${aiName()}"의 ${label}이다. ${RULES}\n\n`;
+    const {parts,total,empty}=await collect(pages,null,J);
+    const head=`문서 "${J.name}"의 ${label}이다. ${RULES}\n\n`;
     let text='';
     // scanned pages (no text layer) go as page pictures when this view allows it
     const lim=sampLimits?.images; const canImg=AI.src==='pdf' && !!lim;
@@ -2105,12 +2112,12 @@ async function summarize(){
     const scanned=new Set(canImg?parts.filter(p=>bytes(p.seg)-bytes(`[p.${p.pg}]\n\n`)<25).map(p=>p.pg):[]);
     const allText=!scanned.size;
     if(allText && total<ONE){
-      const r=await sample(head+parts.map(p=>p.seg).join('\n')+'\n\n'+STYLE[style],{signal:ctl.signal,onText:u=>{ out.innerHTML=md(u.text); }});
+      const r=await sample(head+parts.map(p=>p.seg).join('\n')+'\n\n'+STYLE[style],{signal:ctl.signal,onText:u=>{ put(md(u.text)); }});
       text=r.text;
     } else if(!allText && pages.length<=IMG && scanned.size===pages.length){
-      out.innerHTML='<p class="ai-hint">스캔본이라 페이지 그림을 보내는 중</p>';
-      const imgs=[]; for(const p of pages) imgs.push(await pageJpeg(p));
-      const r=await sample(`첨부한 그림은 문서 "${aiName()}"의 ${label}을 순서대로 찍은 것이다. ${RULES}\n\n${STYLE[style]}`,{images:imgs,signal:ctl.signal,onText:u=>{ out.innerHTML=md(u.text); }});
+      put('<p class="ai-hint">스캔본이라 페이지 그림을 보내는 중</p>');
+      const imgs=[]; for(const p of pages) imgs.push(await pageJpeg(p,undefined,undefined,J));
+      const r=await sample(`첨부한 그림은 문서 "${J.name}"의 ${label}을 순서대로 찍은 것이다. ${RULES}\n\n${STYLE[style]}`,{images:imgs,signal:ctl.signal,onText:u=>{ put(md(u.text)); }});
       text=r.text;
     } else {
       // long range: read it in pieces (text by size, scanned pages a few pictures at a time), then combine
@@ -2122,13 +2129,13 @@ async function summarize(){
         cur.parts.push(p); cur.len+=p.len; }
       const res=new Array(units.length), missAt=[]; let fin=0, busyMsg='';
       // finished pieces are kept with the document, so leaving halfway loses nothing: the next run picks up where it stopped
-      const am=AI.src==='doc'?ED.meta:V.meta; const keep=cap.db && am && !am.local;
-      const left=()=> (AI.src==='doc'?ED.meta:V.meta)!==am;
+      const am=J.meta; const keep=cap.db && am && !am.local;
+      const left=()=>false;
       const pkey=u=>`part_${u.img?'i':'t'}${u.parts[0].pg}_${u.parts[u.parts.length-1].pg}`;
       const saved=new Map();
       if(keep){ try{ const snap=await docRef(am.id).collection('ai').get(); for(const d of snap.docs){ const x=d.data(); if(x.kind==='part' && x.text) saved.set(d.id,x.text); } }catch{} }
       let reused=0; units.forEach((u,i)=>{ const t=saved.get(pkey(u)); if(t){ res[i]=t; fin++; reused++; } });
-      const show=()=>{ if(left()) return; out.innerHTML=`<p class="ai-hint">${pages.length}쪽을 ${units.length}조각으로 나눠 읽는 중 · ${fin}/${units.length} 끝남${reused?` (앞에서 읽어 둔 ${reused}조각 포함)`:''}${missAt.length?` · 못 읽은 조각 ${missAt.length}`:''}${busyMsg?'<br>'+busyMsg:''}<br><small>끝난 조각은 저장돼서, 중간에 나가도 다시 누르면 이어서 읽어요.</small></p>`; };
+      const show=()=>{ put(`<p class="ai-hint">${pages.length}쪽을 ${units.length}조각으로 나눠 읽는 중 · ${fin}/${units.length} 끝남${reused?` (앞에서 읽어 둔 ${reused}조각 포함)`:''}${missAt.length?` · 못 읽은 조각 ${missAt.length}`:''}${busyMsg?'<br>'+busyMsg:''}<br><small>보관함으로 나가도 계속 읽어요. 앱을 닫거나 다른 앱으로 가면 멈추지만, 끝난 조각은 저장돼서 다시 누르면 이어서 읽어요.</small></p>`); };
       // a few pieces at a time: much faster, and still inside the free per-minute allowance
       const PAR=Math.min(3,units.length); let next=0;
       const work=async()=>{ for(;;){ const i=next++; if(i>=units.length) return;
@@ -2141,9 +2148,9 @@ async function summarize(){
           if(left()) throw {code:'_left'};
           try{
             let r;
-            if(u.img){ const imgs=[]; for(const p of u.parts) imgs.push(gem?await pageJpeg(p.pg,1200,0.72):await pageJpeg(p.pg));
-              r=await sample(`첨부한 그림은 문서 "${aiName()}"의 p.${a}~p.${z}을 순서대로 찍은 것이다. ${RULES}\n\n${ask}`,{images:imgs,signal:ctl.signal,modelTier:'quick'}); }
-            else r=await sample(`문서 "${aiName()}"의 p.${a}~p.${z} 부분이다. ${RULES}\n\n`+u.parts.map(p=>p.seg).join('\n')+'\n\n'+ask,{signal:ctl.signal,modelTier:'quick'});
+            if(u.img){ const imgs=[]; for(const p of u.parts) imgs.push(gem?await pageJpeg(p.pg,1200,0.72,J):await pageJpeg(p.pg,undefined,undefined,J));
+              r=await sample(`첨부한 그림은 문서 "${J.name}"의 p.${a}~p.${z}을 순서대로 찍은 것이다. ${RULES}\n\n${ask}`,{images:imgs,signal:ctl.signal,modelTier:'quick'}); }
+            else r=await sample(`문서 "${J.name}"의 p.${a}~p.${z} 부분이다. ${RULES}\n\n`+u.parts.map(p=>p.seg).join('\n')+'\n\n'+ask,{signal:ctl.signal,modelTier:'quick'});
             if(r.text.trim()){ res[i]=`[p.${a}~p.${z}]\n`+r.text; done=true;
               if(keep) docRef(am.id).collection('ai').doc(pkey(u)).set({kind:'part',a,z,text:res[i],at:Date.now()}).catch(()=>{}); }
           }catch(e){ if(ctl.signal.aborted||e?.code==='cancelled'||e?.code==='bad_key'||e?.code==='not_granted') throw e;
@@ -2162,23 +2169,24 @@ async function summarize(){
       const notes=res.filter(Boolean);
       const miss=missAt.sort((x,y)=>x-y).map(i=>{ const u=units[i]; const a=u.parts[0].pg, z=u.parts[u.parts.length-1].pg; return a===z?`p.${a}`:`p.${a}~${z}`; });
       if(!notes.length) throw {gemini:true,code:'timeout',message:'AI가 계속 답하지 않아 요약하지 못했습니다. 잠시 뒤 다시 하거나 쪽 범위를 줄여 주세요.'};
-      out.innerHTML='<p class="ai-hint">부분 정리를 하나로 묶는 중</p>';
+      put('<p class="ai-hint">부분 정리를 하나로 묶는 중</p>');
       let r=null;
-      try{ r=await sample(`다음은 문서 "${aiName()}" ${label}을 부분별로 정리한 노트다. ${RULES}\n\n${notes.join('\n\n---\n\n')}\n\n이 노트를 바탕으로 문서 전체를 하나로 정리해. ${STYLE[style]}`,{signal:ctl.signal,onText:u=>{ out.innerHTML=md(u.text); }}); }
+      try{ r=await sample(`다음은 문서 "${J.name}" ${label}을 부분별로 정리한 노트다. ${RULES}\n\n${notes.join('\n\n---\n\n')}\n\n이 노트를 바탕으로 문서 전체를 하나로 정리해. ${STYLE[style]}`,{signal:ctl.signal,onText:u=>{ put(md(u.text)); }}); }
       catch(e){ if(ctl.signal.aborted||e?.code==='cancelled') throw e; console.warn('combine',e); }
       // if combining fails, the part notes are still a usable summary
       text = r?.text?.trim() ? r.text : '## 부분별 정리\n\n'+notes.join('\n\n');
       if(miss.length) text+=`\n\n> AI가 답하지 않아 빠진 부분: ${miss.join(', ')} — 그 범위만 따로 다시 요약해 주세요.`;
     }
-    out.innerHTML=md(text); bindPg(out); AI.last=text; AI.lastStyle=style; $('#sumActs').hidden=false;
-    const rec={id:'s'+rid(),label,style,text,at:Date.now()}; AI.sums.unshift(rec); renderSums();
-    const am=AI.src==='doc'?ED.meta:V.meta; if(cap.db && am && !am.local) docRef(am.id).collection('ai').doc(rec.id).set({kind:'summary',label,style,text,at:rec.at}).catch(()=>{});
+    const rec={id:'s'+rid(),label,style,text,at:Date.now()};
+    if(here()){ out.innerHTML=md(text); bindPg(out); AI.last=text; AI.lastStyle=style; $('#sumActs').hidden=false; AI.sums.unshift(rec); renderSums(); }
+    if(J.bg) toast(`"${J.name}" 요약이 끝났어요. 그 문서를 열고 AI → 요약에서 볼 수 있어요`,7000);
+    const am=J.meta; if(cap.db && am && !am.local) docRef(am.id).collection('ai').doc(rec.id).set({kind:'summary',label,style,text,at:rec.at}).catch(()=>{});
   }catch(e){
     console.warn(e);
-    if(e?.code==='_left' || (AI.leftRun===ctl)){ toast('요약하던 곳까지 저장해 뒀어요. 다시 요약하기를 누르면 이어서 읽어요',4500); return; }
+    if(J.bg && !here()){ if(!ctl.signal.aborted) toast(`"${J.name}" 요약을 끝내지 못했어요. 읽은 부분은 저장됐으니 다시 누르면 이어서 해요`,7000); return; }
     out.innerHTML=`<p class="ai-hint">${e?.code==='_scan'?'글자가 없는 스캔본입니다. 이 화면에서는 페이지 그림을 AI에 보낼 수 없어 요약하지 못했습니다.':e?.code==='_scanmany'?`스캔본은 한 번에 ${e.n}쪽까지 요약할 수 있습니다. 쪽 범위를 줄여 주세요.`:aiError(e)}</p>`;
     if(e?.text){ out.innerHTML=md(e.text)+out.innerHTML; bindPg(out); }
-  }finally{ AI.busy=null; $('#sumGo').textContent='요약하기'; }
+  }finally{ if(AI.busy===ctl){ AI.busy=null; $('#sumGo').textContent='요약하기'; } if(AI.job===J) AI.job=null; if(J.ownsPdf){ try{ J.pdf?.destroy(); }catch{} } }
 }
 const STYLE_N={core:'핵심 정리',lecture:'강의 정리',exam:'시험 대비',terms:'용어 정리',short:'한 문단'};
 async function loadSums(){
@@ -2760,7 +2768,8 @@ document.addEventListener('keydown',e=>{
 function backHome(){ $('#viewer').hidden=true; $('#home').hidden=false; }
 $('#backBtn').onclick=async()=>{
   if(editing) commitText(); closePicker(); flushMemos();
-  if(AI.busy){ AI.leftRun=AI.busy; AI.busy.abort(); }   // finished summary pieces are already saved
+  // a running summary carries on by itself; the person is told when it is done
+  if(AI.job && AI.busy===AI.job.ctl && AI.job.src==='pdf'){ AI.job.bg=true; AI.busy=null; $('#sumGo').textContent='요약하기'; toast('요약은 계속 진행해요. 끝나면 알려 드릴게요',3500); }
   clearTimeout(V.saveT); if(V.dirty.size) await flushInk();
   saveLastPage(true);
   closeViewerState(); V.meta=null;

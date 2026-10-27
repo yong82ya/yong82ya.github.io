@@ -2533,22 +2533,36 @@ async function summarize(){
         if(!cur || full){ cur={img,parts:[],len:0}; units.push(cur); }
         cur.parts.push(p); cur.len+=p.len; }
       const res=new Array(units.length), missAt=[]; let fin=0, busyMsg='';
-      const show=()=>{ out.innerHTML=`<p class="ai-hint">${pages.length}쪽을 ${units.length}조각으로 나눠 읽는 중 · ${fin}/${units.length} 끝남${missAt.length?` · 못 읽은 조각 ${missAt.length}`:''}${busyMsg?'<br>'+busyMsg:''}</p>`; };
+      // finished pieces are kept with the document, so leaving halfway loses nothing: the next run picks up where it stopped
+      const am=AI.src==='doc'?ED.meta:V.meta; const keep=cap.db && am && !am.local;
+      const left=()=> (AI.src==='doc'?ED.meta:V.meta)!==am;
+      const pkey=u=>`part_${u.img?'i':'t'}${u.parts[0].pg}_${u.parts[u.parts.length-1].pg}`;
+      const saved=new Map();
+      if(keep){ try{ const snap=await docRef(am.id).collection('ai').get(); for(const d of snap.docs){ const x=d.data(); if(x.kind==='part' && x.text) saved.set(d.id,x.text); } }catch{} }
+      let reused=0; units.forEach((u,i)=>{ const t=saved.get(pkey(u)); if(t){ res[i]=t; fin++; reused++; } });
+      const show=()=>{ if(left()) return; out.innerHTML=`<p class="ai-hint">${pages.length}쪽을 ${units.length}조각으로 나눠 읽는 중 · ${fin}/${units.length} 끝남${reused?` (앞에서 읽어 둔 ${reused}조각 포함)`:''}${missAt.length?` · 못 읽은 조각 ${missAt.length}`:''}${busyMsg?'<br>'+busyMsg:''}<br><small>끝난 조각은 저장돼서, 중간에 나가도 다시 누르면 이어서 읽어요.</small></p>`; };
       // a few pieces at a time: much faster, and still inside the free per-minute allowance
       const PAR=Math.min(3,units.length); let next=0;
       const work=async()=>{ for(;;){ const i=next++; if(i>=units.length) return;
+        if(res[i]) continue;
         const u=units[i]; const a=u.parts[0].pg, z=u.parts[u.parts.length-1].pg;
         const ask=`이 부분의 핵심을 쪽 표시 (p.N)와 함께 빠짐없이 개조식으로 정리해.`;
         let done=false;
         for(let k=0;k<2 && !done;k++){
           if(ctl.signal.aborted) throw {code:'cancelled'};
+          if(left()) throw {code:'_left'};
           try{
             let r;
             if(u.img){ const imgs=[]; for(const p of u.parts) imgs.push(gem?await pageJpeg(p.pg,1200,0.72):await pageJpeg(p.pg));
               r=await sample(`첨부한 그림은 문서 "${aiName()}"의 p.${a}~p.${z}을 순서대로 찍은 것이다. ${RULES}\n\n${ask}`,{images:imgs,signal:ctl.signal,modelTier:'quick'}); }
             else r=await sample(`문서 "${aiName()}"의 p.${a}~p.${z} 부분이다. ${RULES}\n\n`+u.parts.map(p=>p.seg).join('\n')+'\n\n'+ask,{signal:ctl.signal,modelTier:'quick'});
-            if(r.text.trim()){ res[i]=`[p.${a}~p.${z}]\n`+r.text; done=true; }
-          }catch(e){ if(ctl.signal.aborted||e?.code==='cancelled'||e?.code==='bad_key'||e?.code==='not_granted') throw e; console.warn('part',a,z,e);
+            if(r.text.trim()){ res[i]=`[p.${a}~p.${z}]\n`+r.text; done=true;
+              if(keep) docRef(am.id).collection('ai').doc(pkey(u)).set({kind:'part',a,z,text:res[i],at:Date.now()}).catch(()=>{}); }
+          }catch(e){ if(ctl.signal.aborted||e?.code==='cancelled'||e?.code==='bad_key'||e?.code==='not_granted') throw e;
+            if(left()) throw {code:'_left'};
+            // the iPad pauses the app while it is in the background: wait for it to come back and try this piece again
+            if(document.hidden){ await new Promise(r=>{ const f=()=>{ if(!document.hidden){ document.removeEventListener('visibilitychange',f); r(); } }; document.addEventListener('visibilitychange',f); }); k--; continue; }
+            console.warn('part',a,z,e);
             // free quota is counted per minute: wait a little before trying this piece again
             if(k===0){ for(let w=gem?20:5;w>0 && !ctl.signal.aborted;w--){ busyMsg=`AI가 잠깐 바빠서 ${w}초 뒤 p.${a}~${z}을 다시 읽습니다`; show(); await new Promise(r=>setTimeout(r,1000)); } busyMsg=''; }
           }
@@ -2573,6 +2587,7 @@ async function summarize(){
     const am=AI.src==='doc'?ED.meta:V.meta; if(cap.db && am && !am.local) docRef(am.id).collection('ai').doc(rec.id).set({kind:'summary',label,style,text,at:rec.at}).catch(()=>{});
   }catch(e){
     console.warn(e);
+    if(e?.code==='_left' || (AI.leftRun===ctl)){ toast('요약하던 곳까지 저장해 뒀어요. 다시 요약하기를 누르면 이어서 읽어요',4500); return; }
     out.innerHTML=`<p class="ai-hint">${e?.code==='_scan'?'글자가 없는 스캔본입니다. 이 화면에서는 페이지 그림을 AI에 보낼 수 없어 요약하지 못했습니다.':e?.code==='_scanmany'?`스캔본은 한 번에 ${e.n}쪽까지 요약할 수 있습니다. 쪽 범위를 줄여 주세요.`:aiError(e)}</p>`;
     if(e?.text){ out.innerHTML=md(e.text)+out.innerHTML; bindPg(out); }
   }finally{ AI.busy=null; $('#sumGo').textContent='요약하기'; }
@@ -3194,6 +3209,7 @@ function backHome(){ $('#viewer').hidden=true; $('#home').hidden=false; }
 $('#backBtn').onclick=async()=>{
   if(MIC.rec){ const done=new Promise(r=>{ const o=MIC.finish; MIC.finish=async()=>{ MIC.finish=o; await o(); r(); }; }); MIC.stop(); await done; }
   if(editing) commitText(); closePicker(); flushMemos();
+  if(AI.busy){ AI.leftRun=AI.busy; AI.busy.abort(); }   // finished summary pieces are already saved
   clearTimeout(V.saveT); if(V.dirty.size) await flushInk();
   saveLastPage(true);
   closeViewerState(); V.meta=null;
@@ -4517,7 +4533,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='10-27 12:25';
+const DESK_BUILD='10-27 12:27';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();

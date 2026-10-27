@@ -2466,7 +2466,8 @@ function aiError(e){
   if(c==='sampling_disabled') return '이 계정에서는 AI를 쓸 수 없습니다.';
   if(c==='session_expired') return '로그인이 만료되었습니다. 새로고침 후 다시 해 주세요.';
   if(c==='cancelled') return '멈췄습니다.';
-  return 'AI 응답을 받지 못했습니다. 다시 시도해 주세요.';
+  const why=e?.message||e?.name||(typeof e==='string'?e:'');
+  return 'AI 응답을 받지 못했습니다. 다시 시도해 주세요.'+(why?` (${String(why).slice(0,120)})`:'');
 }
 new MutationObserver(()=>$('#viewer').classList.toggle('aiopen',!$('#ai').hidden)).observe($('#ai'),{attributes:true,attributeFilter:['hidden']});
 $('#aiBtn').onclick=async()=>{ const a=$('#ai'); if(AI.src!=='pdf'){ $('#viewer .stage').append(a); AI.src='pdf'; AI.sums=[]; AI.chat=[]; askIntro(); } a.hidden=!a.hidden; if(!a.hidden){ $('#sumFrom').value=V.cur; $('#sumTo').value=Math.min(V.n,V.cur+4); loadSums(); if(!await getSample()){ noAiHint(); } } };
@@ -4503,7 +4504,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='10-27 12:13';
+const DESK_BUILD='10-27 12:16';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();
@@ -4546,6 +4547,16 @@ function openAiPanel(){
     log('버전 '+DESK_BUILD+' · 키 '+(k?k.slice(0,4)+'…'+k.length+'자':'없음'));
     await go('1. 구글 AI 서버 연결','https://generativelanguage.googleapis.com/v1beta/models?pageSize=1');
     if(k){ const r=await go('2. 키로 모델 목록','https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',{headers:{'x-goog-api-key':k}}); if(r&&!r.ok){ try{ log('   '+((await r.json())?.error?.message||'').slice(0,160)); }catch{} } }
+    // the real thing: a tiny question to the model in use, once plainly and once streamed like the summary
+    if(k){ const m=A.model()||(A.models()[0])||'gemini-2.5-flash'; const v=parseFloat((m.match(/gemini-(\d+(?:\.\d+)?)/)||[])[1]||0);
+      const gc=v>=3?{thinkingConfig:{thinkingLevel:'low'}}:(/2\.5-flash/.test(m)?{thinkingConfig:{thinkingBudget:0}}:null);
+      const body=JSON.stringify(gc?{contents:[{role:'user',parts:[{text:'"네"라고만 답해.'}]}],generationConfig:gc}:{contents:[{role:'user',parts:[{text:'"네"라고만 답해.'}]}]});
+      const H={headers:{'Content-Type':'application/json','x-goog-api-key':k},method:'POST',body};
+      let r=await go(`3. ${m} 짧은 질문`,`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,H);
+      if(r){ try{ const j=await r.json(); log('   '+(r.ok?'답: '+((j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').slice(0,40)||'(빈 답 '+(j.candidates?.[0]?.finishReason||'')+')'):(j?.error?.message||'').slice(0,160))); }catch(e){ log('   읽기 실패 '+e.message); } }
+      const t0=performance.now(); r=await go(`4. ${m} 이어받기(요약 방식)`,`https://generativelanguage.googleapis.com/v1beta/models/${m}:streamGenerateContent?alt=sse`,H);
+      if(r&&r.ok){ try{ const tx=await r.text(); log(`   받은 글 ${tx.length}자 (${Math.round(performance.now()-t0)}ms)`); }catch(e){ log('   이어받기 끊김 '+e.message); } }
+      else if(r){ try{ log('   '+((await r.json())?.error?.message||'').slice(0,160)); }catch{} } }
     log('끝 · 이 화면을 찍어서 보내 주세요'); };
   acts.prepend(diag); body.append(out);
   body.append(Object.assign(el('p'),{textContent:'버전 '+DESK_BUILD,style:'margin:8px 0 0;font-size:12px;color:var(--muted)'}));

@@ -2054,7 +2054,8 @@ function aiError(e){
   if(c==='sampling_disabled') return '이 계정에서는 AI를 쓸 수 없습니다.';
   if(c==='session_expired') return '로그인이 만료되었습니다. 새로고침 후 다시 해 주세요.';
   if(c==='cancelled') return '멈췄습니다.';
-  return 'AI 응답을 받지 못했습니다. 다시 시도해 주세요.';
+  const why=e?.message||e?.name||(typeof e==='string'?e:'');
+  return 'AI 응답을 받지 못했습니다. 다시 시도해 주세요.'+(why?` (${String(why).slice(0,120)})`:'');
 }
 new MutationObserver(()=>$('#viewer').classList.toggle('aiopen',!$('#ai').hidden)).observe($('#ai'),{attributes:true,attributeFilter:['hidden']});
 $('#aiBtn').onclick=async()=>{ const a=$('#ai'); if(AI.src!=='pdf'){ $('#viewer .stage').append(a); AI.src='pdf'; AI.sums=[]; AI.chat=[]; askIntro(); } a.hidden=!a.hidden; if(!a.hidden){ $('#sumFrom').value=V.cur; $('#sumTo').value=Math.min(V.n,V.cur+4); loadSums(); if(!await getSample()){ $('#sumOut').innerHTML='<p class="ai-hint">이 화면에서는 AI를 쓸 수 없습니다.</p>'; } } };

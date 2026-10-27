@@ -40,6 +40,16 @@ function openAiPanel(){
     log('버전 '+DESK_BUILD+' · 키 '+(k?k.slice(0,4)+'…'+k.length+'자':'없음'));
     await go('1. 구글 AI 서버 연결','https://generativelanguage.googleapis.com/v1beta/models?pageSize=1');
     if(k){ const r=await go('2. 키로 모델 목록','https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',{headers:{'x-goog-api-key':k}}); if(r&&!r.ok){ try{ log('   '+((await r.json())?.error?.message||'').slice(0,160)); }catch{} } }
+    // the real thing: a tiny question to the model in use, once plainly and once streamed like the summary
+    if(k){ const m=A.model()||(A.models()[0])||'gemini-2.5-flash'; const v=parseFloat((m.match(/gemini-(\d+(?:\.\d+)?)/)||[])[1]||0);
+      const gc=v>=3?{thinkingConfig:{thinkingLevel:'low'}}:(/2\.5-flash/.test(m)?{thinkingConfig:{thinkingBudget:0}}:null);
+      const body=JSON.stringify(gc?{contents:[{role:'user',parts:[{text:'"네"라고만 답해.'}]}],generationConfig:gc}:{contents:[{role:'user',parts:[{text:'"네"라고만 답해.'}]}]});
+      const H={headers:{'Content-Type':'application/json','x-goog-api-key':k},method:'POST',body};
+      let r=await go(`3. ${m} 짧은 질문`,`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,H);
+      if(r){ try{ const j=await r.json(); log('   '+(r.ok?'답: '+((j.candidates?.[0]?.content?.parts||[]).map(x=>x.text||'').join('').slice(0,40)||'(빈 답 '+(j.candidates?.[0]?.finishReason||'')+')'):(j?.error?.message||'').slice(0,160))); }catch(e){ log('   읽기 실패 '+e.message); } }
+      const t0=performance.now(); r=await go(`4. ${m} 이어받기(요약 방식)`,`https://generativelanguage.googleapis.com/v1beta/models/${m}:streamGenerateContent?alt=sse`,H);
+      if(r&&r.ok){ try{ const tx=await r.text(); log(`   받은 글 ${tx.length}자 (${Math.round(performance.now()-t0)}ms)`); }catch(e){ log('   이어받기 끊김 '+e.message); } }
+      else if(r){ try{ log('   '+((await r.json())?.error?.message||'').slice(0,160)); }catch{} } }
     log('끝 · 이 화면을 찍어서 보내 주세요'); };
   acts.prepend(diag); body.append(out);
   body.append(Object.assign(el('p'),{textContent:'버전 '+DESK_BUILD,style:'margin:8px 0 0;font-size:12px;color:var(--muted)'}));

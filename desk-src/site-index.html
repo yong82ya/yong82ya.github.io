@@ -390,6 +390,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .paper table{border-collapse:collapse;margin:.6em 0;max-width:100%}.paper td,.paper th{border:1px solid #9aa3ad;padding:4px 8px;vertical-align:top;min-width:40px}
 .paper img{max-width:100%;height:auto}
 .paper hr{border:0;border-top:1px solid #9aa3ad;margin:1em 0}
+@media print{body.print-paper *{visibility:hidden!important}body.print-paper #paper,body.print-paper #paper *{visibility:visible!important}body.print-paper #paper{position:absolute;left:0;top:0;margin:0;max-width:none;width:100%;box-shadow:none!important;padding:0}body.print-paper{background:#fff}}
 #editor.editing .paper{box-shadow:var(--shadow),0 0 0 2px var(--accent-weak)}
 @media (max-width:700px){.paper{padding:28px 20px}}
 .fbar{flex:none;display:flex;gap:8px;align-items:center;background:var(--surface);border-bottom:1px solid var(--line);padding:6px max(10px,env(safe-area-inset-right,0px)) 6px max(10px,env(safe-area-inset-left,0px));flex-wrap:wrap}
@@ -3520,6 +3521,54 @@ const ED={meta:null, saveT:null, mode:'read', zoom:1, range:null, tplBytes:null,
 const paper=$('#paper');
 function showEditorBusy(t){ $('#home').hidden=true; $('#viewer').hidden=true; $('#sheetv').hidden=true; $('#editor').hidden=false; $('#edBusyText').textContent=t; $('#edBusy').hidden=false; }
 function hideEditorBusy(){ $('#edBusy').hidden=true; }
+/* the open document as an A4 PDF, page by page, looking just like the screen.
+   Each page is drawn as a picture (no font files needed), so the text in it is not selectable. */
+async function paperToPdf(step){
+  const W=794, H=1123, M=68, IN=H-2*M, SC=2;           // A4 at 96 px per inch, margins about 18 mm
+  const host=el('div'); host.style.cssText=`position:fixed;left:-20000px;top:0;width:${W}px;pointer-events:none`;
+  const art=paper.cloneNode(true); art.removeAttribute('id'); art.removeAttribute('contenteditable');
+  art.querySelectorAll('[contenteditable]').forEach(x=>x.removeAttribute('contenteditable'));
+  art.style.cssText=`position:relative;max-width:none;width:${W}px;margin:0;padding:${M}px;box-shadow:none;min-height:0;box-sizing:border-box;background:#fff;color:#1d1d1f`;
+  host.append(art); document.body.append(host);
+  try{
+    // pictures inside the document travel inside the page image
+    const toData=b=>new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(r.error); r.readAsDataURL(b); });
+    for(const im of art.querySelectorAll('img')){ try{ if(!/^data:/.test(im.src)){ const b=await (await fetch(im.src)).blob(); im.src=await toData(b); } }catch{ im.remove(); } }
+    try{ await document.fonts.ready; }catch{}
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    // page breaks fall between paragraphs; only something taller than a page gets cut
+    const starts=[M]; let y0=M;
+    for(const k of art.children){ const top=k.offsetTop, bot=top+k.offsetHeight;
+      if(bot-y0<=IN) continue;
+      if(top>y0 && bot-top<=IN){
+        // keep a heading together with what follows it
+        const pv=k.previousElementSibling; y0 = pv && /^H[1-6]$/.test(pv.tagName) && pv.offsetTop>y0 && bot-pv.offsetTop<=IN ? pv.offsetTop : top;
+        starts.push(y0); continue; }
+      if(top>y0){ y0=top; starts.push(y0); }
+      while(bot-y0>IN){ y0+=IN; starts.push(y0); } }
+    const end=art.scrollHeight-M;
+    let css=''; for(const sh of document.styleSheets){ try{ for(const r of sh.cssRules) css+=r.cssText+'\n'; }catch{} }
+    const body=new XMLSerializer().serializeToString(art);
+    const PDFLib=await loadPdfLib(); const pdf=await PDFLib.PDFDocument.create();
+    for(let i=0;i<starts.length;i++){
+      const a=starts[i], b=Math.min(starts[i+1]??end, a+IN); if(b-a<4 && i>0) continue;
+      step?.(`PDF 만드는 중 ${i+1}/${starts.length}쪽`);
+      const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W*SC}" height="${H*SC}" viewBox="0 0 ${W} ${H}"><foreignObject x="0" y="0" width="${W}" height="${H}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;background:#fff;position:relative;overflow:hidden">${'<'+'style>'}${css.replace(/<\/style/gi,'')}${'</'+'style>'}<div style="position:absolute;left:0;top:${M}px;width:${W}px;height:${b-a}px;overflow:hidden"><div style="position:absolute;left:0;top:${-a}px;width:${W}px">${body}</div></div></div></foreignObject></svg>`;
+      const img=new Image(); img.decoding='sync';
+      await new Promise((res,rej)=>{ img.onload=res; img.onerror=()=>rej(new Error('page image')); img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg); });
+      const cv=document.createElement('canvas'); cv.width=W*SC; cv.height=H*SC; const ctx=cv.getContext('2d');
+      ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+      ctx.drawImage(img,0,0,cv.width,cv.height);
+      await new Promise(r=>setTimeout(r,30)); ctx.drawImage(img,0,0,cv.width,cv.height);   // Safari sometimes paints fonts on the second draw
+      const jb=await new Promise((res,rej)=>{ try{ cv.toBlob(x=>x?res(x):rej(new Error('blob')),'image/jpeg',0.9); }catch(e){ rej(e); } });
+      cv.width=cv.height=0;
+      const jp=await pdf.embedJpg(new Uint8Array(await jb.arrayBuffer()));
+      const pg=pdf.addPage([595.28,841.89]); pg.drawImage(jp,{x:0,y:0,width:595.28,height:841.89});
+    }
+    pdf.setTitle(($('#edTitle')?.value||'문서').trim());
+    return new Blob([await pdf.save()],{type:'application/pdf'});
+  } finally { host.remove(); }
+}
 async function openDocEntry(meta, html){
   showEditorBusy('문서를 여는 중');
   ED.meta=meta; ED.tplBytes=null; if(AI.src==='doc'){ AI.sums=[]; AI.chat=[]; AI.segs=null; $('#ai').hidden=true; askIntro(); }
@@ -3690,10 +3739,16 @@ $('#edTitle').addEventListener('change',e=>{ const m=ED.meta; if(!m) return; con
 $('#edTitle').addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') e.target.blur(); });
 $('#edBack').onclick=async()=>{ fdClose(); $('#edPop').hidden=true; clearTimeout(ED.saveT); await saveDocContent(); ED.meta=null; $('#editor').hidden=true; $('#home').hidden=false; renderShelf(); };
 $('#edExport').onclick=async()=>{
-  const v=await sheet('다른 형식으로 저장','어떤 형식으로 내려받을까요? 한글(HWPX)은 한컴오피스에서 한 번 열어 확인해 주세요.',[{label:'취소',value:null},{label:'TXT',value:'txt'},{label:'HWPX (한글)',value:'hwpx'},{label:'DOCX (워드)',value:'docx',cls:'btn-primary'}]);
+  const v=await sheet('다른 형식으로 저장','어떤 형식으로 내려받을까요? 한글(HWPX)은 한컴오피스에서 한 번 열어 확인해 주세요.',[{label:'취소',value:null},{label:'TXT',value:'txt'},{label:'PDF',value:'pdf'},{label:'HWPX (한글)',value:'hwpx'},{label:'DOCX (워드)',value:'docx',cls:'btn-primary'}]);
   if(!v) return; const base=$('#edTitle').value.trim()||'문서'; const blocks=toBlocks(paper);
   try{
     if(v==='txt') return offerFile(base+'.txt',new Blob([blocksToText(blocks)],{type:'text/plain'}));
+    if(v==='pdf'){ showEditorBusy('PDF 만드는 중'); let b=null; try{ b=await paperToPdf(t=>{ $('#edBusyText').textContent=t; }); }catch(e){ console.warn('pdf',e); } hideEditorBusy();
+      if(b) return offerFile(base+'.pdf',b);
+      // this browser would not draw the pages: its own print screen can still save a PDF
+      const go=await sheet('인쇄 화면으로 PDF 만들기','이 기기에서는 PDF를 바로 만들지 못했어요. 인쇄 화면을 열면 문서만 나오니, 거기서 공유(아이패드) 또는 "PDF로 저장"을 고르세요.',[{label:'취소',value:null},{label:'인쇄 화면 열기',value:1,cls:'btn-primary'}]);
+      if(go){ document.body.classList.add('print-paper'); const t=document.title; document.title=base; setTimeout(()=>{ window.print(); setTimeout(()=>{ document.body.classList.remove('print-paper'); document.title=t; },500); },50); }
+      return; }
     if(v==='docx'){ showEditorBusy('DOCX 만드는 중'); const b=await blocksToDocx(blocks,base); hideEditorBusy(); return offerFile(base+'.docx',b); }
     if(v==='hwpx'){
       showEditorBusy('HWPX 만드는 중');

@@ -404,6 +404,21 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .paper img{max-width:100%;height:auto}
 .paper hr{border:0;border-top:1px solid #9aa3ad;margin:1em 0}
 @media print{body.print-paper *{visibility:hidden!important}body.print-paper #paper,body.print-paper #paper *{visibility:visible!important}body.print-paper #paper{position:absolute;left:0;top:0;margin:0;max-width:none;width:100%;box-shadow:none!important;padding:0}body.print-paper{background:#fff}}
+#paper{width:794px;max-width:none;padding:68px;box-sizing:border-box}
+.dink{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2}
+.dpages{position:absolute;right:14px;bottom:12px;z-index:3;font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-variant-numeric:tabular-nums;pointer-events:none}
+.inkbar .eb[aria-pressed="true"]{background:var(--accent-weak);color:var(--accent)}
+.inkbar .dsep{width:1px;height:22px;background:var(--line);margin:0 4px}
+.inkbar .dsw,.inkbar .dsz{display:flex;gap:4px;align-items:center}
+.inkbar .dsw button{width:24px;height:24px;border-radius:50%;border:2px solid transparent;padding:0}
+.inkbar .dsw button[aria-pressed="true"]{border-color:var(--ink)}
+.inkbar .dsz button{width:30px;height:30px;border-radius:8px;display:grid;place-items:center}
+.inkbar .dsz button span{display:block;border-radius:50%;background:var(--ink)}
+.inkbar .dsz button[aria-pressed="true"]{background:var(--accent-weak)}
+.inkbar .dhint{font-size:12px;color:var(--muted);margin-left:6px}
+@media (max-width:900px){.inkbar .dhint{display:none}}
+#editor.inking #paper{cursor:crosshair;touch-action:pan-x pan-y pinch-zoom;-webkit-user-select:none;user-select:none}
+#editor.inking.dfinger #paper{touch-action:none}
 #editor.editing .paper{box-shadow:var(--shadow),0 0 0 2px var(--accent-weak)}
 @media (max-width:700px){.paper{padding:28px 20px}}
 .fbar{flex:none;display:flex;gap:8px;align-items:center;background:var(--surface);border-bottom:1px solid var(--line);padding:6px max(10px,env(safe-area-inset-right,0px)) 6px max(10px,env(safe-area-inset-left,0px));flex-wrap:wrap}
@@ -625,7 +640,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     <button class="ib" id="edBack" title="보관함으로"><svg class="i"><use href="#i-back"/></svg><span class="hide-sm">보관함</span></button>
     <span class="ftag" id="edFmt"></span>
     <input class="ed-title" id="edTitle" aria-label="문서 이름">
-    <div class="seg"><button id="edModeRead" aria-pressed="true">읽기</button><button id="edModeEdit" aria-pressed="false">편집</button></div>
+    <div class="seg"><button id="edModeRead" aria-pressed="true">읽기</button><button id="edModeEdit" aria-pressed="false">편집</button><button id="edModePen" aria-pressed="false" title="펜으로 문서 위에 쓰기">필기</button></div>
     <div class="hlg" title="형광펜: 글자를 고르고 색을 누르세요"><button data-hl="#FFF176" style="background:#FFF176" title="노랑 형광"></button><button data-hl="#B9F6CA" style="background:#B9F6CA" title="연두 형광"></button><button data-hl="#FFC1E3" style="background:#FFC1E3" title="분홍 형광"></button><button data-hl="transparent" title="형광 지우기" style="background:linear-gradient(135deg,#fff 45%,#d33 45%,#d33 55%,#fff 55%)"></button></div>
     <button class="ib hide-sm" id="edZoomOut" title="작게 보기"><svg class="i"><use href="#i-minus"/></svg></button><button class="ib hide-sm" id="edZoomIn" title="크게 보기"><svg class="i"><use href="#i-plus"/></svg></button>
     <button class="ib" id="edFind" title="찾기 · 바꾸기 (Ctrl+F)"><svg class="i"><use href="#i-search"/></svg><span class="hide-sm">찾기</span></button>
@@ -649,6 +664,13 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     <label class="eb" for="edImgIn" title="그림 넣기">그림</label><input type="file" id="edImgIn" accept="image/*" class="sr">
     <button class="eb" data-cmd="removeFormat" title="서식 지우기">지움</button>
   </div>
+  <div class="edbar inkbar" id="edInkBar" hidden role="toolbar" aria-label="필기 도구">
+    <button class="eb" data-dt="pen" title="펜"><svg class="i"><use href="#i-pen"/></svg></button><button class="eb" data-dt="hl" title="형광펜"><svg class="i"><use href="#i-hl"/></svg></button><button class="eb" data-dt="eraser" title="지우개 (획 단위)"><svg class="i"><use href="#i-eraser"/></svg></button>
+    <span class="dsep"></span><span id="dSw" class="dsw"></span><span class="dsep"></span><span id="dSz" class="dsz"></span><span class="dsep"></span>
+    <button class="eb" id="dUndo" title="필기 되돌리기"><svg class="i"><use href="#i-undo"/></svg></button><button class="eb" id="dRedo" title="필기 다시"><svg class="i"><use href="#i-redo"/></svg></button>
+    <button class="eb" id="dFinger" aria-pressed="false" title="손가락으로도 쓰기 (끄면 손가락은 스크롤)"><svg class="i"><use href="#i-finger"/></svg></button>
+    <span class="dhint">애플펜슬·마우스로 쓰고, 손가락으로 넘겨요. 필기는 문단을 따라다녀요.</span>
+  </div>
   <div class="findbar" id="edFindBar" hidden role="search">
     <input id="fdQ" placeholder="찾을 말" aria-label="찾을 말"><span class="fdn" id="fdN"></span>
     <button class="eb" id="fdPrev" title="이전 (Shift+Enter)">▲</button><button class="eb" id="fdNext" title="다음 (Enter)">▼</button>
@@ -656,7 +678,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     <button class="eb" id="fdClose" title="닫기 (Esc)">✕</button>
   </div>
   <div class="pop" id="edPop" hidden></div>
-  <div class="stage" id="edStage"><div class="edscroll" id="edScroll"><article class="paper" id="paper" spellcheck="false"></article></div></div>
+  <div class="stage" id="edStage"><div class="edscroll" id="edScroll"><article class="paper" id="paper" spellcheck="false"></article></div><canvas class="dink" id="dInk" aria-hidden="true"></canvas><canvas class="dink" id="dLive" aria-hidden="true"></canvas><span class="dpages" id="dPages" hidden></span></div>
   <div class="busy" id="edBusy" hidden><div><span class="spin"></span><span id="edBusyText">문서를 여는 중</span></div></div>
 </section>
 
@@ -3441,6 +3463,7 @@ function sanitize(html){
         if(tag==='IMG' && n==='src' && /^(data:image\/(png|jpe?g|gif|webp|bmp);|\/_blob\/|\.\/_blob\/|blob:)/i.test(a.value)) continue;
         if(tag==='IMG' && (n==='width'||n==='height') && /^\d{1,5}$/.test(a.value)) continue;
         if(n==='data-w'||n==='data-h') continue;
+        if(n==='data-k' && /^[a-z0-9]{1,14}$/.test(a.value)) continue;
         ch.removeAttribute(a.name);
       }
       walk(ch);
@@ -3993,8 +4016,22 @@ function showEditorBusy(t){ $('#home').hidden=true; $('#viewer').hidden=true; $(
 function hideEditorBusy(){ $('#edBusy').hidden=true; }
 /* the open document as an A4 PDF, page by page, looking just like the screen.
    Each page is drawn as a picture (no font files needed), so the text in it is not selectable. */
+// page breaks fall between paragraphs; only something taller than a page gets cut. Shared by the page lines on screen and the PDF.
+function pageStarts(items,M,IN){
+  const starts=[M]; let y0=M;
+  items.forEach((k,i)=>{ const {top,bot}=k;
+    if(bot-y0<=IN) return;
+    if(top>y0 && bot-top<=IN){
+      const pv=items[i-1];   // keep a heading together with what follows it
+      y0 = pv && pv.head && pv.top>y0 && bot-pv.top<=IN ? pv.top : top;
+      starts.push(y0); return; }
+    if(top>y0){ y0=top; starts.push(y0); }
+    while(bot-y0>IN){ y0+=IN; starts.push(y0); } });
+  return starts;
+}
+const PAGE={W:794,H:1123,M:68}; PAGE.IN=PAGE.H-2*PAGE.M;
 async function paperToPdf(step){
-  const W=794, H=1123, M=68, IN=H-2*M, SC=2;           // A4 at 96 px per inch, margins about 18 mm
+  const {W,H,M,IN}=PAGE, SC=2;           // A4 at 96 px per inch, margins about 18 mm
   const host=el('div'); host.style.cssText=`position:fixed;left:-20000px;top:0;width:${W}px;pointer-events:none`;
   const art=paper.cloneNode(true); art.removeAttribute('id'); art.removeAttribute('contenteditable');
   art.querySelectorAll('[contenteditable]').forEach(x=>x.removeAttribute('contenteditable'));
@@ -4006,16 +4043,7 @@ async function paperToPdf(step){
     for(const im of art.querySelectorAll('img')){ try{ if(!/^data:/.test(im.src)){ const b=await (await fetch(im.src)).blob(); im.src=await toData(b); } }catch{ im.remove(); } }
     try{ await document.fonts.ready; }catch{}
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-    // page breaks fall between paragraphs; only something taller than a page gets cut
-    const starts=[M]; let y0=M;
-    for(const k of art.children){ const top=k.offsetTop, bot=top+k.offsetHeight;
-      if(bot-y0<=IN) continue;
-      if(top>y0 && bot-top<=IN){
-        // keep a heading together with what follows it
-        const pv=k.previousElementSibling; y0 = pv && /^H[1-6]$/.test(pv.tagName) && pv.offsetTop>y0 && bot-pv.offsetTop<=IN ? pv.offsetTop : top;
-        starts.push(y0); continue; }
-      if(top>y0){ y0=top; starts.push(y0); }
-      while(bot-y0>IN){ y0+=IN; starts.push(y0); } }
+    const starts=pageStarts([...art.children].map(k=>({top:k.offsetTop,bot:k.offsetTop+k.offsetHeight,head:/^H[1-6]$/.test(k.tagName)})),M,IN);
     const end=art.scrollHeight-M;
     let css=''; for(const sh of document.styleSheets){ try{ for(const r of sh.cssRules) css+=r.cssText+'\n'; }catch{} }
     const body=new XMLSerializer().serializeToString(art);
@@ -4030,6 +4058,8 @@ async function paperToPdf(step){
       ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
       ctx.drawImage(img,0,0,cv.width,cv.height);
       await new Promise(r=>setTimeout(r,30)); ctx.drawImage(img,0,0,cv.width,cv.height);   // Safari sometimes paints fonts on the second draw
+      if(DI.ink.length){ const tops=dTops(); const k=W/N; ctx.save(); ctx.beginPath(); ctx.rect(0,0,cv.width,cv.height); ctx.clip(); ctx.lineCap='round'; ctx.lineJoin='round';
+        for(const st of DI.ink){ const ty=dTopOf(st,tops); ctx.setTransform(SC*k,0,0,SC*k,0,SC*(M-a)+SC*k*ty); drawStroke(ctx,st); } ctx.restore(); }
       const jb=await new Promise((res,rej)=>{ try{ cv.toBlob(x=>x?res(x):rej(new Error('blob')),'image/jpeg',0.9); }catch(e){ rej(e); } });
       cv.width=cv.height=0;
       const jp=await pdf.embedJpg(new Uint8Array(await jb.arrayBuffer()));
@@ -4050,18 +4080,20 @@ async function openDocEntry(meta, html){
   paper.innerHTML=html||'<p><br></p>';
   $('#edTitle').value=meta.name.replace(/\.[^.]+$/,''); $('#edFmt').textContent=(meta.fmt||'').toUpperCase();
   setEdMode('read'); hideEditorBusy(); $('#edScroll').scrollTop=0;
+  DI.ink=[]; DI.undo=[]; DI.redo=[]; ED.keysNew=false; dKeys(); dFit(); loadDocInk(meta);
   meta.openedAt=Date.now(); if(!meta.local) writeEntry(meta);
   edPill();
 }
 function edPill(state){ const p=$('#edPill'); if(!cap.db){ p.textContent='이 기기에만 보임'; return; } p.textContent= state==='saving'?'저장 중':state==='pending'?'저장 대기':state==='err'?'저장 실패':'저장됨'; p.classList.toggle('err',state==='err'); }
 function setEdMode(m){
-  ED.mode=m; const edit=m==='edit'; paper.contentEditable=edit?'true':'false'; $('#edEditBar').hidden=!edit;
-  $('#edModeRead').setAttribute('aria-pressed',String(!edit)); $('#edModeEdit').setAttribute('aria-pressed',String(edit));
-  $('#editor').classList.toggle('editing',edit);
+  ED.mode=m; const edit=m==='edit', pen=m==='pen'; paper.contentEditable=edit?'true':'false'; $('#edEditBar').hidden=!edit; $('#edInkBar').hidden=!pen;
+  $('#edModeRead').setAttribute('aria-pressed',String(m==='read')); $('#edModeEdit').setAttribute('aria-pressed',String(edit)); $('#edModePen').setAttribute('aria-pressed',String(pen));
+  $('#editor').classList.toggle('editing',edit); $('#editor').classList.toggle('inking',pen);
+  if(pen){ getSelection().removeAllRanges(); dBar(); }
   if(edit) paper.focus({preventScroll:true});
 }
-$('#edModeRead').onclick=()=>setEdMode('read'); $('#edModeEdit').onclick=()=>setEdMode('edit');
-paper.addEventListener('input',()=>{ AI.segs=null; edPill('pending'); clearTimeout(ED.saveT); ED.saveT=setTimeout(()=>saveDocContent(),1500); });
+$('#edModeRead').onclick=()=>setEdMode('read'); $('#edModeEdit').onclick=()=>setEdMode('edit'); $('#edModePen').onclick=()=>setEdMode('pen');
+paper.addEventListener('input',()=>{ AI.segs=null; dKeys(); dSoon(); edPill('pending'); clearTimeout(ED.saveT); ED.saveT=setTimeout(()=>saveDocContent(),1500); });
 document.addEventListener('selectionchange',()=>{ const s=getSelection(); if(s.rangeCount && paper.contains(s.anchorNode)) ED.range=s.getRangeAt(0).cloneRange(); });
 function restoreSel(){ if(!ED.range) return; const s=getSelection(); s.removeAllRanges(); s.addRange(ED.range); }
 async function saveDocContent(now){
@@ -4076,6 +4108,122 @@ async function saveDocContent(now){
   }catch(e){ console.warn(e); edPill('err'); }
   ED.saving=false;
 }
+/* ================= handwriting on 한글·워드 documents =================
+   Strokes hang on a paragraph (top-level block, tagged data-k): x across the page, y from the paragraph's top,
+   in the same 0..N units as PDF ink. Text added above pushes the paragraph down and its notes go with it. */
+const DI={ink:[], undo:[], redo:[], tool:'pen', saveT:null, raf:0, act:null}; window.deskInk=DI;
+const dIn=$('#dInk'), dLv=$('#dLive'), dSc=$('#edScroll');
+const dKey=()=>Math.random().toString(36).slice(2,10);
+function dKeys(){ const seen=new Set(); for(const b of paper.children){ let k=b.dataset.k; if(!k || seen.has(k)){ k=dKey(); b.dataset.k=k; ED.keysNew=true; } seen.add(k); } }
+function dScale(){ const r=paper.getBoundingClientRect(); return {r, s:r.width/PAGE.W}; }
+// paragraph tops in N units (page-width based), from what is on screen
+function dTops(){ const {r,s}=dScale(); const k=N/PAGE.W; const m=new Map(); const list=[];
+  for(const b of paper.children){ const br=b.getBoundingClientRect(); const top=(br.top-r.top)/s, bot=(br.bottom-r.top)/s; m.set(b.dataset.k,top*k); list.push({k:b.dataset.k,top:top*k,bot:bot*k}); }
+  m.list=list; return m; }
+const dTopOf=(st,tops)=>tops.has(st.k)?tops.get(st.k):st.ay;
+function dFit(){ const w=dSc.clientWidth-24; const fit=w>0?Math.min(1,w/PAGE.W):1; paper.style.zoom=String(ED.zoom*fit); dSoon(); }
+// page lines + strokes
+function dSizeCv(cv){ const dpr=devicePixelRatio||1; const w=Math.round(cv.clientWidth*dpr), h=Math.round(cv.clientHeight*dpr); if(cv.width!==w||cv.height!==h){ cv.width=w; cv.height=h; } return dpr; }
+function dXform(ctx,cv){ const dpr=dSizeCv(cv); const cr=cv.getBoundingClientRect(); const {r,s}=dScale(); const k=s*PAGE.W/N*dpr; return {dpr,cr,r,s,k,ox:(r.left-cr.left)*dpr,oy:(r.top-cr.top)*dpr}; }
+function dDraw(){
+  DI.raf=0; if($('#editor').hidden) return;
+  const ctx=dIn.getContext('2d'); const X=dXform(ctx,dIn); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,dIn.width,dIn.height);
+  // where pages end: same rule as the PDF
+  const {s,r}=X; const items=[...paper.children].map(b=>{ const br=b.getBoundingClientRect(); return {top:(br.top-r.top)/s,bot:(br.bottom-r.top)/s,head:/^H[1-6]$/.test(b.tagName)}; });
+  const starts=pageStarts(items,PAGE.M,PAGE.IN); const pc=starts.length;
+  const pe=$('#dPages'); pe.hidden=!paper.children.length; pe.textContent=`총 ${pc}쪽`;
+  ctx.save(); ctx.font=`${12*X.dpr}px system-ui,sans-serif`; ctx.textAlign='right';
+  for(let i=1;i<starts.length;i++){ const y=X.oy+(starts[i]-PAGE.M*0.45)*s*X.dpr; if(y<-20||y>dIn.height+20) continue;
+    const x0=X.ox, x1=X.ox+PAGE.W*s*X.dpr;
+    ctx.fillStyle='rgba(120,120,140,.10)'; ctx.fillRect(x0,y-3*X.dpr,x1-x0,6*X.dpr);
+    ctx.setLineDash([6*X.dpr,5*X.dpr]); ctx.strokeStyle='rgba(110,110,130,.55)'; ctx.lineWidth=1*X.dpr; ctx.beginPath(); ctx.moveTo(x0,y); ctx.lineTo(x1,y); ctx.stroke();
+    ctx.setLineDash([]); ctx.fillStyle='rgba(90,90,110,.85)'; ctx.fillText(`${i+1}쪽`, x1-8*X.dpr, y-6*X.dpr); }
+  ctx.restore();
+  if(!DI.ink.length) return;
+  const tops=dTops(); ctx.lineCap='round'; ctx.lineJoin='round';
+  const vis0=-X.oy/X.k-2000, vis1=(dIn.height-X.oy)/X.k+2000;
+  for(const t of ['hl','pen']) for(const st of DI.ink){ if(st.t!==t) continue; const ty=dTopOf(st,tops); if(st.y1!=null && (ty+st.y1<vis0 || ty+st.y0>vis1)) continue;
+    ctx.setTransform(X.k,0,0,X.k,X.ox,X.oy+ty*X.k); drawStroke(ctx,st); }
+  ctx.setTransform(1,0,0,1,0,0);
+}
+function dSoon(){ if(!DI.raf) DI.raf=requestAnimationFrame(dDraw); }
+dSc.addEventListener('scroll',dSoon,{passive:true}); window.addEventListener('resize',()=>{ if(!$('#editor').hidden) dFit(); });
+paper.addEventListener('load',dSoon,true); document.fonts?.ready?.then(dSoon);
+{ const ro=new ResizeObserver(()=>{ dSoon(); if(DI.act) dLive(); }); ro.observe(paper); ro.observe(dIn); }   // the drawing layer changes size when tool bars open or close
+// tools
+function dBar(){
+  document.querySelectorAll('#edInkBar [data-dt]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.dt===DI.tool)));
+  const sw=$('#dSw'), sz=$('#dSz'); sw.replaceChildren(); sz.replaceChildren();
+  const t=DI.tool==='eraser'?null:DI.tool; sw.hidden=sz.hidden=!t; $('#dFinger').setAttribute('aria-pressed',String(!!V.finger)); $('#editor').classList.toggle('dfinger',!!V.finger);
+  if(!t) return; const set=t==='hl'?HL:PEN;
+  for(const c of set.colors){ const b=el('button'); b.style.background=c; b.title='색'; b.setAttribute('aria-pressed',String(V.color[t]===c)); b.onclick=()=>{ V.color[t]=c; rememberTools(); dBar(); }; sw.append(b); }
+  set.sizes.forEach((w,i)=>{ const b=el('button'); b.title=['가늘게','보통','굵게'][i]; const d=el('span'); const px=Math.max(3,Math.min(18,w*PAGE.W/N*(t==='hl'?0.5:1.6))); d.style.width=d.style.height=px+'px'; if(t==='hl'){ d.style.background=V.color.hl; d.style.borderRadius='3px'; } b.append(d); b.setAttribute('aria-pressed',String(V.size[t]===i)); b.onclick=()=>{ V.size[t]=i; rememberTools(); dBar(); }; sz.append(b); });
+}
+document.querySelectorAll('#edInkBar [data-dt]').forEach(b=>b.onclick=()=>{ DI.tool=b.dataset.dt; dBar(); });
+$('#dFinger').onclick=()=>{ V.finger=!V.finger; rememberTools(); dBar(); toast(V.finger?'손가락으로도 써요. 넘길 때는 두 손가락으로':'손가락은 스크롤, 펜슬로만 써요',2500); };
+$('#dUndo').onclick=()=>{ const u=DI.undo.pop(); if(!u) return; DI.ink=DI.ink.filter(x=>!u.add.includes(x)).concat(u.rem); DI.redo.push(u); dChanged(); };
+$('#dRedo').onclick=()=>{ const u=DI.redo.pop(); if(!u) return; DI.ink=DI.ink.filter(x=>!u.rem.includes(x)).concat(u.add); DI.undo.push(u); dChanged(); };
+function dChanged(){ dSoon(); clearTimeout(DI.saveT); DI.saveT=setTimeout(saveDocInk,1000); edPill('pending'); }
+// input
+function dPt(e){ const {r,s}=dScale(); const k=N/PAGE.W; return [Math.round((e.clientX-r.left)/s*k), Math.round((e.clientY-r.top)/s*k)]; }
+function dAllowed(e){ if(ED.mode!=='pen') return false; if(e.pointerType==='pen') return true; if(e.pointerType==='mouse') return e.button===0; if(e.pointerType==='touch') return !!V.finger; return false; }
+dSc.addEventListener('touchstart',e=>{ if(ED.mode!=='pen') return; for(const t of e.changedTouches) if(t.touchType==='stylus'){ e.preventDefault(); return; } },{passive:false});
+dSc.addEventListener('pointerdown',e=>{
+  if(!dAllowed(e) || DI.act) return;
+  const p=dPt(e); if(p[0]<-400 || p[0]>N+400) return;
+  e.preventDefault(); try{ dSc.setPointerCapture(e.pointerId); }catch{}
+  if(DI.tool==='eraser'){ DI.act={kind:'erase',id:e.pointerId,rem:[],tops:dTops()}; dErase(p); return; }
+  const isHl=DI.tool==='hl';
+  DI.act={kind:'draw',id:e.pointerId,s:{t:isHl?'hl':'pen',c:V.color[DI.tool],w:(isHl?HL:PEN).sizes[V.size[DI.tool]],p:[p[0],p[1]],ts:Date.now()}};
+  dLive();
+},{passive:false});
+dSc.addEventListener('pointermove',e=>{
+  const a=DI.act; if(!a || e.pointerId!==a.id) return; e.preventDefault();
+  const evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];
+  if(a.kind==='erase'){ for(const ev of (evs.length?evs:[e])) dErase(dPt(ev)); return; }
+  const q=a.s.p, minD=Math.max(6,a.s.w*0.15);
+  for(const ev of (evs.length?evs:[e])){ const [x,y]=dPt(ev); if(Math.hypot(x-q[q.length-2],y-q[q.length-1])>=minD) q.push(x,y); }
+  if(!a.raf) a.raf=requestAnimationFrame(()=>{ a.raf=0; dLive(); });
+},{passive:false});
+function dLive(){ const a=DI.act; const ctx=dLv.getContext('2d'); const X=dXform(ctx,dLv); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,dLv.width,dLv.height); if(!a||a.kind!=='draw') return; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.setTransform(X.k,0,0,X.k,X.ox,X.oy); drawStroke(ctx,a.s); }
+function dEnd(e){
+  const a=DI.act; if(!a || (e && e.pointerId!==a.id)) return; DI.act=null; cancelAnimationFrame(a.raf);
+  if(a.kind==='erase'){ if(a.rem.length){ DI.undo.push({add:[],rem:a.rem}); DI.redo=[]; dChanged(); } return; }
+  const st=a.s; if(st.p.length===2) st.p.push(st.p[0]+1,st.p[1]);
+  // hang it on the paragraph under its middle
+  const tops=dTops(); const ys=st.p.filter((v,i)=>i%2); const mid=(Math.min(...ys)+Math.max(...ys))/2;
+  let blk=tops.list.find(b=>mid>=b.top && mid<=b.bot) || tops.list.filter(b=>b.top<=mid).pop() || tops.list[0];
+  const top=blk?blk.top:0; st.k=blk?blk.k:''; st.ay=top;
+  for(let i=1;i<st.p.length;i+=2) st.p[i]=Math.round(st.p[i]-top);
+  const ry=st.p.filter((v,i)=>i%2); st.y0=Math.min(...ry)-st.w; st.y1=Math.max(...ry)+st.w;
+  DI.ink.push(st); DI.undo.push({add:[st],rem:[]}); DI.redo=[];
+  dLive(); dChanged();
+  if(ED.keysNew){ ED.keysNew=false; saveDocContent(); }   // the paragraph tags must be kept for the notes to find them
+}
+dSc.addEventListener('pointerup',dEnd); dSc.addEventListener('pointercancel',dEnd);
+function dErase([x,y]){
+  const a=DI.act; const tops=a.tops; const r=Math.max(90,(PEN.sizes[1]||26)*3);
+  const keep=[]; for(const st of DI.ink){ const ty=dTopOf(st,tops); let hit=false; const q=st.p; const rr=r+st.w/2;
+    if(st.y1==null || (y>=ty+st.y0-rr && y<=ty+st.y1+rr)) for(let i=0;i<q.length;i+=2){ if(Math.hypot(q[i]-x,q[i+1]+ty-y)<=rr){ hit=true; break; } }
+    if(hit) a.rem.push(st); else keep.push(st); }
+  if(keep.length!==DI.ink.length){ DI.ink=keep; dSoon(); }
+}
+// storage: alongside the document (synced to Drive with it)
+const dCol=id=>docRef(id).collection('dink');
+async function saveDocInk(){
+  clearTimeout(DI.saveT); DI.saveT=null; const m=ED.meta; if(!m || !cap.db || m.local) return;
+  try{ const str=JSON.stringify(DI.ink.map(({t,c,w,p,ts,k,ay,y0,y1})=>({t,c,w,p,ts,k,ay,y0,y1}))); const size=200000; const n=Math.ceil(str.length/size);
+    for(let i=0;i<n;i++) await dCol(m.id).doc('i'+i).set({i,n,s:str.slice(i*size,(i+1)*size)});
+    for(let i=n;i<(m.inkChunks||0);i++) await dCol(m.id).doc('i'+i).delete();
+    m.inkChunks=n;
+    edPill(); }catch(e){ console.warn('ink save',e); edPill('err'); }
+}
+async function loadDocInk(m){
+  if(!cap.db || m.local) return;
+  try{ const snap=await dCol(m.id).get(); const parts=snap.docs.map(d=>d.data()).filter(x=>typeof x.s==='string').sort((a,b)=>a.i-b.i); if(ED.meta!==m) return;
+    const n=parts[0]?.n||0; const str=parts.slice(0,n).map(x=>x.s).join(''); DI.ink=str?JSON.parse(str):[]; dSoon(); }catch(e){ console.warn('ink load',e); }
+}
+
 // commands
 function cmd(c,v){ restoreSel(); document.execCommand('styleWithCSS',false,true); document.execCommand(c,false,v??null); paper.dispatchEvent(new Event('input')); }
 function withTempEdit(fn){ const was=paper.contentEditable; if(was!=='true'){ paper.contentEditable='true'; } restoreSel(); fn(); if(was!=='true') paper.contentEditable=was; paper.dispatchEvent(new Event('input')); }
@@ -4204,10 +4352,10 @@ paper.addEventListener('paste',e=>{
   if(html) document.execCommand('insertHTML',false,sanitize(html)); else document.execCommand('insertText',false,text);
 });
 paper.addEventListener('keydown',e=>{ if(ED.mode!=='edit') return; if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); clearTimeout(ED.saveT); saveDocContent(); } });
-$('#edZoomIn').onclick=()=>{ ED.zoom=Math.min(2,ED.zoom+0.1); paper.style.zoom=ED.zoom; }; $('#edZoomOut').onclick=()=>{ ED.zoom=Math.max(0.6,ED.zoom-0.1); paper.style.zoom=ED.zoom; };
+$('#edZoomIn').onclick=()=>{ ED.zoom=Math.min(2,ED.zoom+0.1); dFit(); }; $('#edZoomOut').onclick=()=>{ ED.zoom=Math.max(0.6,ED.zoom-0.1); dFit(); };
 $('#edTitle').addEventListener('change',e=>{ const m=ED.meta; if(!m) return; const v=e.target.value.trim(); if(!v) return; m.name=v+'.'+(m.fmt==='md'?'md':m.fmt); writeEntry(m); });
 $('#edTitle').addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') e.target.blur(); });
-$('#edBack').onclick=async()=>{ fdClose(); $('#edPop').hidden=true; clearTimeout(ED.saveT); await saveDocContent(); ED.meta=null; $('#editor').hidden=true; $('#home').hidden=false; renderShelf(); };
+$('#edBack').onclick=async()=>{ fdClose(); if(DI.saveT){ clearTimeout(DI.saveT); await saveDocInk(); } $('#edPop').hidden=true; clearTimeout(ED.saveT); await saveDocContent(); ED.meta=null; $('#editor').hidden=true; $('#home').hidden=false; renderShelf(); };
 $('#edExport').onclick=async()=>{
   const v=await sheet('다른 형식으로 저장','어떤 형식으로 내려받을까요? 한글(HWPX)은 한컴오피스에서 한 번 열어 확인해 주세요.',[{label:'취소',value:null},{label:'TXT',value:'txt'},{label:'PDF',value:'pdf'},{label:'HWPX (한글)',value:'hwpx'},{label:'DOCX (워드)',value:'docx',cls:'btn-primary'}]);
   if(!v) return; const base=$('#edTitle').value.trim()||'문서'; const blocks=toBlocks(paper);
@@ -4621,7 +4769,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='10-28 11:08';
+const DESK_BUILD='10-29 16:06';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();

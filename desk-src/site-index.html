@@ -3589,6 +3589,35 @@ async function embedFonts(root){
   }
   return {css:out, ok:got===want};
 }
+// Draw the document as the page picture would, with every paragraph painted one flat colour and everything else
+// invisible, then read the colours back: that gives each paragraph's top and bottom inside the picture.
+async function measurePicture(art,css,n){
+  const W=PAGE.W, WIN=2000;
+  const cal=art.cloneNode(true); cal.classList.add('dcal');
+  [...cal.children].forEach((k,i)=>k.style.setProperty('background-color',`rgb(${20+i%200},${20+Math.floor(i/200)%200},77)`,'important'));
+  const calCss='.dcal,.dcal *{color:transparent!important;border-color:transparent!important;background-color:transparent!important;background-image:none!important;box-shadow:none!important;text-decoration-color:transparent!important;outline:none!important;caret-color:transparent!important}.dcal img{opacity:0!important}';
+  const body=new XMLSerializer().serializeToString(cal);
+  const top=new Array(n).fill(null), bot=new Array(n).fill(null);
+  const limit=Math.max(art.scrollHeight*1.6, art.scrollHeight+3000);
+  let lastSeen=-1;
+  for(let o=0;o<limit;o+=WIN){
+    const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${WIN}"><foreignObject x="0" y="0" width="${W}" height="${WIN}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${WIN}px;background:#fff;position:relative;overflow:hidden">${'<'+'style>'}${css.replace(/<\/style/gi,'')}${calCss}${'</'+'style>'}<div style="position:absolute;left:0;top:${-o}px;width:${W}px">${body}</div></div></foreignObject></svg>`;
+    const img=new Image(); await new Promise((res,rej)=>{ img.onload=res; img.onerror=()=>rej(new Error('measure image')); img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg); });
+    try{ await img.decode(); }catch{}
+    const cv=document.createElement('canvas'); cv.width=W; cv.height=WIN; const c=cv.getContext('2d',{willReadFrequently:true}); c.fillStyle='#fff'; c.fillRect(0,0,W,WIN); c.drawImage(img,0,0);
+    const x0=PAGE.M, w=Math.min(320,W-x0); const d=c.getImageData(x0,0,w,WIN).data; let any=false;
+    for(let y=0;y<WIN;y++){ const row=y*w*4;
+      for(let x=0;x<w;x+=2){ const q=row+x*4; if(d[q+2]!==77) continue; const r=d[q], g=d[q+1]; if(r<20||g<20||d[q+3]<250) continue;
+        const i=(r-20)+(g-20)*200; if(i>=n) continue; const Y=o+y; if(top[i]==null) top[i]=Y; bot[i]=Y+1; any=true; if(i>lastSeen) lastSeen=i; break; } }
+    cv.width=cv.height=0;
+    if(!any && lastSeen>=n-1) break;
+  }
+  if(top.every(v=>v==null)) return null;
+  // paragraphs that showed no colour (empty ones): put them just after the one before
+  let prev=PAGE.M; const out=[];
+  for(let i=0;i<n;i++){ if(top[i]==null){ out.push({top:prev,bot:prev}); } else { out.push({top:top[i],bot:bot[i]}); prev=bot[i]; } }
+  return out;
+}
 async function paperToPdf(step){
   const {W,H,M,IN}=PAGE, SC=2;           // A4 at 96 px per inch, margins about 18 mm
   const host=el('div'); host.style.cssText=`position:fixed;left:-20000px;top:0;width:${W}px;pointer-events:none`;
@@ -3602,11 +3631,28 @@ async function paperToPdf(step){
     for(const im of art.querySelectorAll('img')){ try{ if(!/^data:/.test(im.src)){ const b=await (await fetch(im.src)).blob(); im.src=await toData(b); } }catch{ im.remove(); } }
     try{ await document.fonts.ready; }catch{}
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-    const starts=pageStarts([...art.children].map(k=>({top:k.offsetTop,bot:k.offsetTop+k.offsetHeight,head:/^H[1-6]$/.test(k.tagName)})),M,IN);
-    const end=art.scrollHeight-M;
     step?.('글꼴 넣는 중'); const fonts=await embedFonts(art);
     let css=fonts.css; for(const sh of document.styleSheets){ try{ for(const r of sh.cssRules) css+=r.cssText+'\n'; }catch{} }
+    css+=window.deskPdfTestCss||'';   // lets a test make the picture lay out differently from the screen
     const body=new XMLSerializer().serializeToString(art);
+    // Where each paragraph really lands inside the page picture. The browser may lay it out a little differently
+    // from the screen, so page breaks and handwriting follow this measurement rather than the screen.
+    const kids=[...art.children];
+    let lay=null; try{ step?.('쪽 나누는 중'); lay=await measurePicture(art,css,kids.length); }catch(e){ console.warn('measure',e); }
+    const items=kids.map((k,i)=>{ const L=lay?.[i]; return L?{top:L.top,bot:L.bot,head:/^H[1-6]$/.test(k.tagName)}:{top:k.offsetTop,bot:k.offsetTop+k.offsetHeight,head:/^H[1-6]$/.test(k.tagName)}; });
+    const starts=pageStarts(items,M,IN);
+    const end=Math.max(art.scrollHeight-M, ...items.map(x=>x.bot));
+    // handwriting: screen paragraph → same paragraph in the picture
+    const scr=dTops(); const kN=N/W; const byKey=new Map(); kids.forEach((k,i)=>byKey.set(k.dataset.k,i));
+    const inkY=st=>{   // returns the stroke's vertical shift in picture px (strokes are drawn in N units)
+      let i=byKey.get(st.k), sTop, sBot;
+      if(i!=null){ const S=scr.list[i]; sTop=S?.top; sBot=S?.bot; }
+      if(sTop==null){ const ay=st.ay||0; let j=-1; scr.list.forEach((b,x)=>{ if(b.top<=ay+1) j=x; }); i=j<0?0:j; const S=scr.list[i]; if(!S) return ay/kN; sTop=S.top; sBot=S.bot; const off=(ay-sTop); st={...st,y0:(st.y0??0)+off}; }
+      const it=items[i]; if(!it) return (sTop)/kN;
+      const r=Math.max(0.6,Math.min(1.6,(it.bot-it.top)/Math.max(1,(sBot-sTop)/kN)));
+      const y0=(st.y0??0);              // stroke top, from its paragraph top (N units)
+      return it.top + (y0/kN)*r - y0/kN + (dTopOf(st,scr)-sTop)/kN;
+    };
     const PDFLib=await loadPdfLib(); const pdf=await PDFLib.PDFDocument.create();
     for(let i=0;i<starts.length;i++){
       const a=starts[i], b=Math.min(starts[i+1]??end, a+IN); if(b-a<4 && i>0) continue;
@@ -3625,8 +3671,8 @@ async function paperToPdf(step){
       ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
       ctx.drawImage(img,0,M*SC,PW,PH);
       await new Promise(r=>setTimeout(r,fonts.css?150:30)); ctx.fillRect(0,0,cv.width,cv.height); ctx.drawImage(img,0,M*SC,PW,PH);   // Safari sometimes paints fonts only on the second draw
-      if(DI.ink.length){ const tops=dTops(); const k=W/N; ctx.save(); ctx.beginPath(); ctx.rect(0,0,cv.width,cv.height); ctx.clip(); ctx.lineCap='round'; ctx.lineJoin='round';
-        for(const st of DI.ink){ const ty=dTopOf(st,tops); ctx.setTransform(SC*k,0,0,SC*k,0,SC*(M-a)+SC*k*ty); drawStroke(ctx,st); } ctx.restore(); }
+      if(DI.ink.length){ const k=W/N; ctx.save(); ctx.beginPath(); ctx.rect(0,0,cv.width,cv.height); ctx.clip(); ctx.lineCap='round'; ctx.lineJoin='round';
+        for(const st of DI.ink){ const ty=inkY(st); ctx.setTransform(SC*k,0,0,SC*k,0,SC*(M-a+ty)); drawStroke(ctx,st); } ctx.restore(); }
       const jb=await new Promise((res,rej)=>{ try{ cv.toBlob(x=>x?res(x):rej(new Error('blob')),'image/jpeg',0.9); }catch(e){ rej(e); } });
       cv.width=cv.height=0;
       const jp=await pdf.embedJpg(new Uint8Array(await jb.arrayBuffer()));

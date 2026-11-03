@@ -3589,8 +3589,18 @@ async function embedFonts(root){
   }
   return {css:out, ok:got===want};
 }
+// Does this browser apply a CSS scale to HTML inside an SVG picture? If not, pages are drawn at 1:1 instead of
+// coming out half size.
+async function svgScale(SC){
+  try{
+    const W=PAGE.W, svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W*SC}" height="${12*SC}"><foreignObject x="0" y="0" width="${W*SC}" height="${12*SC}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:12px;transform:scale(${SC});transform-origin:0 0;background:#000"></div></foreignObject></svg>`;
+    const img=new Image(); await new Promise((res,rej)=>{ img.onload=res; img.onerror=rej; img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg); });
+    const cv=document.createElement('canvas'); cv.width=W*SC; cv.height=12*SC; const c=cv.getContext('2d'); c.fillStyle='#fff'; c.fillRect(0,0,cv.width,cv.height); c.drawImage(img,0,0);
+    const d=c.getImageData(W*SC-6, 9*SC, 1, 1).data; return d[0]<80 ? SC : 1;
+  }catch{ return 1; }
+}
 async function paperToPdf(step){
-  const {W,H,M,IN}=PAGE, SC=2;           // A4 at 96 px per inch, margins about 18 mm
+  const {W,H,M,IN}=PAGE; const SC=await svgScale(2);           // A4 at 96 px per inch, margins about 18 mm
   const host=el('div'); host.style.cssText=`position:fixed;left:-20000px;top:0;width:${W}px;pointer-events:none`;
   const art=paper.cloneNode(true); art.removeAttribute('id'); art.removeAttribute('contenteditable');
   art.querySelectorAll('[contenteditable]').forEach(x=>x.removeAttribute('contenteditable'));
@@ -3611,14 +3621,18 @@ async function paperToPdf(step){
     for(let i=0;i<starts.length;i++){
       const a=starts[i], b=Math.min(starts[i+1]??end, a+IN); if(b-a<4 && i>0) continue;
       step?.(`PDF 만드는 중 ${i+1}/${starts.length}쪽`);
-      const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W*SC}" height="${H*SC}" viewBox="0 0 ${W} ${H}"><foreignObject x="0" y="0" width="${W}" height="${H}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;background:#fff;position:relative;overflow:hidden">${'<'+'style>'}${css.replace(/<\/style/gi,'')}${'</'+'style>'}<div style="position:absolute;left:0;top:${M}px;width:${W}px;height:${b-a}px;overflow:hidden"><div style="position:absolute;left:0;top:${-a}px;width:${W}px">${body}</div></div></div></foreignObject></svg>`;
+      // Only this page's slice of the document, at the final pixel size, scaled with a CSS transform.
+      // (Safari ignores an SVG viewBox for HTML inside it, which shrank everything to half size, and it does not
+      // reliably clip inside the picture — so the picture is exactly the slice and its own edge does the clipping.)
+      const hh=Math.ceil(b-a), PW=W*SC, PH=hh*SC;
+      const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${PW}" height="${PH}"><foreignObject x="0" y="0" width="${PW}" height="${PH}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${hh}px;background:#fff;position:relative;overflow:hidden;transform:scale(${SC});transform-origin:0 0">${'<'+'style>'}${css.replace(/<\/style/gi,'')}${'</'+'style>'}<div style="position:absolute;left:0;top:${-a}px;width:${W}px">${body}</div></div></foreignObject></svg>`;
       const img=new Image(); img.decoding='sync';
       await new Promise((res,rej)=>{ img.onload=res; img.onerror=()=>rej(new Error('page image')); img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg); });
       try{ await img.decode(); }catch{}
       const cv=document.createElement('canvas'); cv.width=W*SC; cv.height=H*SC; const ctx=cv.getContext('2d');
       ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
-      ctx.drawImage(img,0,0,cv.width,cv.height);
-      await new Promise(r=>setTimeout(r,fonts.css?150:30)); ctx.fillRect(0,0,cv.width,cv.height); ctx.drawImage(img,0,0,cv.width,cv.height);   // Safari sometimes paints fonts only on the second draw
+      ctx.drawImage(img,0,M*SC,PW,PH);
+      await new Promise(r=>setTimeout(r,fonts.css?150:30)); ctx.fillRect(0,0,cv.width,cv.height); ctx.drawImage(img,0,M*SC,PW,PH);   // Safari sometimes paints fonts only on the second draw
       if(DI.ink.length){ const tops=dTops(); const k=W/N; ctx.save(); ctx.beginPath(); ctx.rect(0,0,cv.width,cv.height); ctx.clip(); ctx.lineCap='round'; ctx.lineJoin='round';
         for(const st of DI.ink){ const ty=dTopOf(st,tops); ctx.setTransform(SC*k,0,0,SC*k,0,SC*(M-a)+SC*k*ty); drawStroke(ctx,st); } ctx.restore(); }
       const jb=await new Promise((res,rej)=>{ try{ cv.toBlob(x=>x?res(x):rej(new Error('blob')),'image/jpeg',0.9); }catch(e){ rej(e); } });

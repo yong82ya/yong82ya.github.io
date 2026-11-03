@@ -4112,6 +4112,7 @@ async function paperToPdf(step){
     const items=kids.map((k,i)=>{ const L=lay?.[i]; return L?{top:L.top,bot:L.bot,head:/^H[1-6]$/.test(k.tagName)}:{top:k.offsetTop,bot:k.offsetTop+k.offsetHeight,head:/^H[1-6]$/.test(k.tagName)}; });
     const starts=pageStarts(items,M,IN);
     const end=Math.max(art.scrollHeight-M, ...items.map(x=>x.bot));
+    const pageOfY=y=>{ let p=0; for(let j=1;j<starts.length;j++) if(y>=starts[j]) p=j; return p; };
     // handwriting: screen paragraph → same paragraph in the picture
     const scr=dTops(); const kN=N/W; const byKey=new Map(); kids.forEach((k,i)=>byKey.set(k.dataset.k,i));
     const inkY=st=>{   // returns the stroke's vertical shift in picture px (strokes are drawn in N units)
@@ -4142,7 +4143,9 @@ async function paperToPdf(step){
       ctx.drawImage(img,0,M*SC,PW,PH);
       await new Promise(r=>setTimeout(r,fonts.css?150:30)); ctx.fillRect(0,0,cv.width,cv.height); ctx.drawImage(img,0,M*SC,PW,PH);   // Safari sometimes paints fonts only on the second draw
       if(DI.ink.length){ const k=W/N; ctx.save(); ctx.beginPath(); ctx.rect(0,0,cv.width,cv.height); ctx.clip(); ctx.lineCap='round'; ctx.lineJoin='round';
-        for(const st of DI.ink){ const ty=inkY(st); ctx.setTransform(SC*k,0,0,SC*k,0,SC*(M-a+ty)); drawStroke(ctx,st); } ctx.restore(); }
+        // each stroke belongs to the one page its middle falls on, so nothing is drawn twice across a page break
+        for(const st of DI.ink){ const ty=inkY(st); const mid=ty+((st.y0??0)+(st.y1??0))/2*k; if(pageOfY(mid)!==i) continue;
+          ctx.setTransform(SC*k,0,0,SC*k,0,SC*(M-a+ty)); drawStroke(ctx,st); } ctx.restore(); }
       const jb=await new Promise((res,rej)=>{ try{ cv.toBlob(x=>x?res(x):rej(new Error('blob')),'image/jpeg',0.9); }catch(e){ rej(e); } });
       cv.width=cv.height=0;
       const jp=await pdf.embedJpg(new Uint8Array(await jb.arrayBuffer()));
@@ -4860,7 +4863,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='11-03 12:14';
+const DESK_BUILD='11-03 13:31';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();

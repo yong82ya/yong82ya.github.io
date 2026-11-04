@@ -269,6 +269,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .recent{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .recent span{font-size:12px;color:var(--muted);margin-right:2px}
 .recent button{width:24px;height:24px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
+.txgrip{position:absolute;z-index:4;width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;cursor:move;touch-action:none;box-shadow:0 2px 6px rgba(0,0,0,.25)}.txgrip svg{width:18px;height:18px}
 .txed{position:absolute;z-index:3;margin:0;padding:0;border:0;outline:1.5px dashed var(--accent);outline-offset:4px;background:rgba(255,255,255,.6);resize:none;overflow:hidden;white-space:pre;line-height:1.3;font-family:"IBM Plex Sans KR","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;min-width:2ch}
 .scroller.text .page{cursor:text}
 .pages.two{flex-direction:row;flex-wrap:wrap;justify-content:center;align-items:flex-start;column-gap:18px;row-gap:30px;margin-inline:auto;box-sizing:content-box}
@@ -1843,7 +1844,7 @@ function drawAllowed(e){
 }
 scroller.addEventListener('pointerdown',e=>{
   if(!$('#picker').hidden) closePicker();
-  if(e.target.classList?.contains('txed') || e.target.closest?.('.memo')) return;
+  if(e.target.classList?.contains('txed') || e.target.closest?.('.txgrip,.memo')) return;
   if(editing){ commitText(); if(V.tool==='text'){ e.preventDefault(); return; } }
   const pageDiv=e.target.closest?.('.page');
   if(!pageDiv){ if(V.tool==='hand' && e.pointerType==='mouse') startPan(e); return; }
@@ -1856,7 +1857,9 @@ scroller.addEventListener('pointerdown',e=>{
   if(V.tool==='eraser'){ act={kind:'erase',P,id:e.pointerId,removed:[]}; eraseAt(P,toNorm(P,e)); return; }
   if(V.tool==='capture'){ const live=el('canvas','live'); live.style.mixBlendMode='normal'; live.width=P.ink.width; live.height=P.ink.height; P.div.append(live);
     act={kind:'cap',P,id:e.pointerId,pts:toNorm(P,e),rect:V.ruler||e.shiftKey,live,ctx:setupCtx(live)}; drawLasso(); return; }
-  if(V.tool==='text'){ const [x,y]=toNorm(P,e); const hitT=(V.ink.get(P.i+1)||[]).slice().reverse().find(s=>s.t==='text' && x>=s.x-40 && x<=s.x+s.w+40 && y>=s.y-40 && y<=s.y+s.h+40); openText(P, hitT?hitT.x:x, hitT?hitT.y:Math.max(0,y-Math.round(PT(V.tstyle.pt)*0.6)), hitT); return; }
+  if(V.tool==='text'){ const [x,y]=toNorm(P,e); const hitT=(V.ink.get(P.i+1)||[]).slice().reverse().find(s=>s.t==='text' && x>=s.x-40 && x<=s.x+s.w+40 && y>=s.y-40 && y<=s.y+s.h+40);
+    if(hitT){ act={kind:'movetext',P,id:e.pointerId,orig:hitT,m:null,start:[x,y]}; return; }
+    openText(P, x, Math.max(0,y-Math.round(PT(V.tstyle.pt)*0.6)), null); return; }
   const isHl=V.tool==='hl';
   const s={t:isHl?'hl':'pen', c:V.color[V.tool], w:(isHl?HL:PEN).sizes[V.size[V.tool]], p:toNorm(P,e), ts:Date.now()};
   const live=el('canvas','live'); live.width=P.ink.width; live.height=P.ink.height; P.div.append(live);
@@ -1869,6 +1872,10 @@ scroller.addEventListener('pointermove',e=>{
   e.preventDefault();
   const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
   if(act.kind==='erase'){ for(const ev of evs) eraseAt(act.P,toNorm(act.P,ev)); return; }
+  if(act.kind==='movetext'){ const [x,y]=toNorm(act.P,e); const dx=x-act.start[0], dy=y-act.start[1];
+    if(!act.m){ if(Math.hypot(dx,dy)<60) return; const pg=act.P.i+1; act.m={...act.orig}; V.ink.set(pg,(V.ink.get(pg)||[]).map(s=>s===act.orig?act.m:s)); }
+    act.m.x=Math.max(0,Math.round(act.orig.x+dx)); act.m.y=Math.max(0,Math.round(act.orig.y+dy));
+    if(!act.raf) act.raf=requestAnimationFrame(()=>{ if(act){ act.raf=0; drawInk(act.P); } }); return; }
   if(act.kind==='cap'){ const q=toNorm(act.P,e); if(act.rect) act.pts=[act.pts[0],act.pts[1],q[0],q[1]]; else { const p=act.pts; for(const ev of (evs.length?evs:[e])){ const [x,y]=toNorm(act.P,ev); if(Math.hypot(x-p[p.length-2],y-p[p.length-1])>=20) p.push(x,y); } }
     if(!act.raf) act.raf=requestAnimationFrame(()=>{ if(act){ act.raf=0; drawLasso(); } }); return; }
   if(act.straight){ const [x0,y0]=act.start; let [x1,y1]=toNorm(act.P,e); const dx=x1-x0, dy=y1-y0, len=Math.hypot(dx,dy);
@@ -1889,6 +1896,7 @@ function endGesture(e){
   if(!act || (e && e.pointerId!==act.id)) return;
   const a=act; act=null; cancelAnimationFrame(a.raf);
   const pg=a.P.i+1;
+  if(a.kind==='movetext'){ if(a.m){ drawInk(a.P); pushUndo({page:pg,add:[a.m],rem:[a.orig]}); markDirty(pg); } else if(e?.type==='pointerup') openText(a.P,a.orig.x,a.orig.y,a.orig); return; }
   if(a.kind==='cap'){ a.live.remove(); const poly=a.rect?rectPoly(a.pts):a.pts; const b=bbox(poly); if(b.w<120||b.h<120){ toast('영역을 조금 더 크게 그려 주세요',1600); return; } openCapture(a.P,poly,!a.rect); return; }
   if(a.kind==='draw'){
     a.live.remove();
@@ -2005,20 +2013,30 @@ function openText(P,x,y,orig){
   editing={P,x,y,sz,c,f,b,orig,ta,ts:orig?.ts||Date.now()};
   if(orig && V.tool==='text'){ V.tstyle={f,pt:toPt(sz),b}; V.color.text=c; renderDockOpts(); }
   ensureFont(f).then(layoutEditor);
-  layoutEditor(); P.div.append(ta); ta.focus({preventScroll:true});
+  const grip=el('div','txgrip'); grip.title='끌어서 옮기기'; grip.innerHTML='<svg viewBox="0 0 24 24"><path d="M12 2l3 3h-2v6h6V9l3 3-3 3v-2h-6v6h2l-3 3-3-3h2v-6H5v2l-3-3 3-3v2h6V5H9z" fill="currentColor"/></svg>';
+  editing.grip=grip;
+  const keep=ev=>{ ev.preventDefault(); ev.stopPropagation(); };
+  grip.addEventListener('mousedown',keep); grip.addEventListener('touchstart',keep,{passive:false});
+  grip.addEventListener('pointerdown',ev=>{ keep(ev); if(!editing) return; const d=editing; d.drag={id:ev.pointerId,sx:ev.clientX,sy:ev.clientY,x:d.x,y:d.y}; try{ grip.setPointerCapture(ev.pointerId); }catch{} });
+  grip.addEventListener('pointermove',ev=>{ const d=editing; if(!d?.drag || ev.pointerId!==d.drag.id) return; keep(ev); const k=pageScale(d.P);
+    d.x=Math.max(0,Math.round(d.drag.x+(ev.clientX-d.drag.sx)/k)); d.y=Math.max(0,Math.round(d.drag.y+(ev.clientY-d.drag.sy)/k)); layoutEditor(); });
+  const drop=ev=>{ const d=editing; if(!d?.drag || ev.pointerId!==d.drag.id) return; d.drag=null; ta.focus({preventScroll:true}); };
+  grip.addEventListener('pointerup',drop); grip.addEventListener('pointercancel',drop);
+  layoutEditor(); P.div.append(ta,grip); ta.focus({preventScroll:true});
   ta.addEventListener('input',layoutEditor);
-  ta.addEventListener('blur',()=>setTimeout(()=>{ if(editing?.ta===ta && document.activeElement!==ta && !document.activeElement?.closest?.('#dock,#picker')) commitText(); },150));
+  ta.addEventListener('blur',()=>setTimeout(()=>{ if(editing?.ta===ta && !editing.drag && document.activeElement!==ta && !document.activeElement?.closest?.('#dock,#picker')) commitText(); },150));
   ta.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Escape' || (e.key==='Enter' && (e.ctrlKey||e.metaKey))){ e.preventDefault(); commitText(); } });
 }
 function layoutEditor(){
   if(!editing) return; const {P,x,y,sz,c,f,b,ta}=editing; const k=pageScale(P);
   const tmp=measure({s:sz,f,b,txt:ta.value||' '});
   Object.assign(ta.style,{left:x*k+'px',top:y*k+'px',font:fontStr(sz*k,f,b),lineHeight:String(LH),color:c,width:Math.max(tmp.w*k+12,sz*k*2)+'px',height:tmp.h*k+'px'});
+  if(editing.grip) Object.assign(editing.grip.style,{left:(x*k-34)+'px',top:(y*k-6)+'px'});
 }
 function commitText(){
-  if(!editing) return; const {P,x,y,sz,c,f,b,orig,ta,ts}=editing; editing=null; ta.remove();
+  if(!editing) return; const {P,x,y,sz,c,f,b,orig,ta,ts,grip}=editing; editing=null; ta.remove(); grip?.remove();
   const pg=P.i+1, txt=ta.value.replace(/\s+$/,''); const arr=V.ink.get(pg)||[];
-  if(orig && txt===orig.txt && sz===orig.s && c===orig.c && f===(orig.f||'plex') && b===!!orig.b){ V.ink.set(pg,arr.concat(orig)); drawInk(P); return; }
+  if(orig && txt===orig.txt && sz===orig.s && c===orig.c && f===(orig.f||'plex') && b===!!orig.b && x===orig.x && y===orig.y){ V.ink.set(pg,arr.concat(orig)); drawInk(P); return; }
   if(txt){ const item=measure({t:'text',c,s:sz,x,y,txt,ts,f,b}); V.ink.set(pg,arr.concat(item)); pushUndo({page:pg,add:[item],rem:orig?[orig]:[]}); }
   else if(orig){ pushUndo({page:pg,add:[],rem:[orig]}); }
   else return;

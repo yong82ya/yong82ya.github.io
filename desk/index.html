@@ -4034,6 +4034,9 @@ function showEditorBusy(t){ $('#home').hidden=true; $('#viewer').hidden=true; $(
 function hideEditorBusy(){ $('#edBusy').hidden=true; }
 /* the open document as an A4 PDF, page by page, looking just like the screen.
    Each page is drawn as a picture (no font files needed), so the text in it is not selectable. */
+// The pieces a page may break between: paragraphs, and the rows of a table (a table that does not fit
+// is split between rows instead of jumping whole to the next page and leaving the page above nearly empty).
+function breakUnits(root){ const out=[]; [...root.children].forEach((k,i)=>{ if(k.tagName==='TABLE' && k.rows.length>1) for(const r of k.rows) out.push({el:r,b:i,head:false}); else out.push({el:k,b:i,head:/^H[1-6]$/.test(k.tagName)}); }); return out; }
 // page breaks fall between paragraphs; only something taller than a page gets cut. Shared by the page lines on screen and the PDF.
 function pageStarts(items,M,IN){
   const starts=[M]; let y0=M;
@@ -4082,7 +4085,7 @@ async function embedFonts(root){
 async function measurePicture(art,css,n){
   const W=PAGE.W, WIN=2000;
   const cal=art.cloneNode(true); cal.classList.add('dcal');
-  [...cal.children].forEach((k,i)=>k.style.setProperty('background-color',`rgb(${20+i%200},${20+Math.floor(i/200)%200},77)`,'important'));
+  breakUnits(cal).forEach((u,i)=>u.el.style.setProperty('background-color',`rgb(${20+i%200},${20+Math.floor(i/200)%200},77)`,'important'));
   const calCss='.dcal,.dcal *{color:transparent!important;border-color:transparent!important;background-color:transparent!important;background-image:none!important;box-shadow:none!important;text-decoration-color:transparent!important;outline:none!important;caret-color:transparent!important}.dcal img{opacity:0!important}';
   const body=new XMLSerializer().serializeToString(cal);
   const top=new Array(n).fill(null), bot=new Array(n).fill(null);
@@ -4125,11 +4128,14 @@ async function paperToPdf(step){
     const body=new XMLSerializer().serializeToString(art);
     // Where each paragraph really lands inside the page picture. The browser may lay it out a little differently
     // from the screen, so page breaks and handwriting follow this measurement rather than the screen.
-    const kids=[...art.children];
-    let lay=null; try{ step?.('쪽 나누는 중'); lay=await measurePicture(art,css,kids.length); }catch(e){ console.warn('measure',e); }
-    const items=kids.map((k,i)=>{ const L=lay?.[i]; return L?{top:L.top,bot:L.bot,head:/^H[1-6]$/.test(k.tagName)}:{top:k.offsetTop,bot:k.offsetTop+k.offsetHeight,head:/^H[1-6]$/.test(k.tagName)}; });
-    const starts=pageStarts(items,M,IN);
-    const end=Math.max(art.scrollHeight-M, ...items.map(x=>x.bot));
+    const kids=[...art.children]; const units=breakUnits(art); const ar=art.getBoundingClientRect();
+    let lay=null; try{ step?.('쪽 나누는 중'); lay=await measurePicture(art,css,units.length); }catch(e){ console.warn('measure',e); }
+    const uItems=units.map((u,j)=>{ const L=lay?.[j]; if(L) return {top:L.top,bot:L.bot,head:u.head}; const r=u.el.getBoundingClientRect(); return {top:r.top-ar.top,bot:r.bottom-ar.top,head:u.head}; });
+    // whole paragraphs (a table = all its rows), for placing handwriting
+    const items=kids.map(()=>({top:Infinity,bot:-Infinity})); units.forEach((u,j)=>{ const B=items[u.b]; B.top=Math.min(B.top,uItems[j].top); B.bot=Math.max(B.bot,uItems[j].bot); });
+    items.forEach((B,i)=>{ if(!isFinite(B.top)){ B.top=kids[i].offsetTop; B.bot=B.top+kids[i].offsetHeight; } });
+    const starts=pageStarts(uItems,M,IN);
+    const end=Math.max(art.scrollHeight-M, ...uItems.map(x=>x.bot));
     const pageOfY=y=>{ let p=0; for(let j=1;j<starts.length;j++) if(y>=starts[j]) p=j; return p; };
     // handwriting: screen paragraph → same paragraph in the picture
     const scr=dTops(); const kN=N/W; const byKey=new Map(); kids.forEach((k,i)=>byKey.set(k.dataset.k,i));
@@ -4234,7 +4240,7 @@ function dDraw(){
   DI.raf=0; if($('#editor').hidden) return;
   const ctx=dIn.getContext('2d'); const X=dXform(ctx,dIn); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,dIn.width,dIn.height);
   // where pages end: same rule as the PDF
-  const {s,r}=X; const items=[...paper.children].map(b=>{ const br=b.getBoundingClientRect(); return {top:(br.top-r.top)/s,bot:(br.bottom-r.top)/s,head:/^H[1-6]$/.test(b.tagName)}; });
+  const {s,r}=X; const items=breakUnits(paper).map(u=>{ const br=u.el.getBoundingClientRect(); return {top:(br.top-r.top)/s,bot:(br.bottom-r.top)/s,head:u.head}; });
   const starts=pageStarts(items,PAGE.M,PAGE.IN); const pc=starts.length;
   const pe=$('#dPages'); pe.hidden=!paper.children.length; pe.textContent=`총 ${pc}쪽`;
   ctx.save(); ctx.font=`${12*X.dpr}px system-ui,sans-serif`; ctx.textAlign='right';
@@ -4881,7 +4887,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='11-04 13:22';
+const DESK_BUILD='11-05 11:58';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();

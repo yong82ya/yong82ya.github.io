@@ -278,6 +278,10 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .txgrip{position:absolute;z-index:4;width:20px;height:20px;border-radius:6px;background:var(--accent);color:#fff;display:grid;place-items:center;cursor:move;touch-action:none;box-shadow:0 2px 6px rgba(0,0,0,.25)}.txgrip svg{width:13px;height:13px}
 .txed{position:absolute;z-index:3;margin:0;padding:0;border:0;outline:1.5px dashed var(--accent);outline-offset:4px;background:rgba(255,255,255,.6);resize:none;overflow:hidden;white-space:pre;line-height:1.3;font-family:"IBM Plex Sans KR","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;min-width:2ch}
 .scroller.text .page{cursor:text}
+.pages.flip .page{display:none}.pages.flip .page.on{display:block}
+.pages.flip{padding-bottom:40px}
+.flipnav{position:absolute;top:50%;transform:translateY(-50%);z-index:6;width:40px;height:72px;border-radius:12px;background:color-mix(in srgb,var(--surface) 82%,transparent);border:1px solid var(--line);font-size:30px;line-height:1;color:var(--muted);box-shadow:var(--shadow)}
+.flipnav.prev{left:8px}.flipnav.next{right:8px}.flipnav:disabled{opacity:.25}
 .pages.two{flex-direction:row;flex-wrap:wrap;justify-content:center;align-items:flex-start;column-gap:18px;row-gap:30px;margin-inline:auto;box-sizing:content-box}
 .memolayer{position:absolute;inset:0;pointer-events:none;z-index:4;overflow:hidden}
 .memo{position:absolute;pointer-events:auto;display:flex;flex-direction:column;border-radius:6px;border:1px solid rgba(var(--m),.95);
@@ -463,6 +467,8 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M3.5 15.5L15.5 3.5l5 5-12 12z"/><path d="M7 12l1.8 1.8M9.5 9.5l2.5 2.5M12 7l1.8 1.8M14.5 4.5l2.5 2.5"/></symbol>
   <symbol id="i-memo" viewBox="0 0 24 24"><path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/></symbol>
   <symbol id="i-one" viewBox="0 0 24 24"><rect x="7" y="4" width="10" height="16" rx="1.5"/></symbol>
+  <symbol id="i-flip" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="1.5"/><path d="M3 12h-.5M2.5 12l2-2M2.5 12l2 2M21.5 12l-2-2M21.5 12l-2 2" stroke-linecap="round"/></symbol>
+  <symbol id="i-scrollv" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="9" rx="1.2"/><rect x="6" y="13" width="12" height="9" rx="1.2"/></symbol>
   <symbol id="i-two" viewBox="0 0 24 24"><rect x="3" y="5" width="8" height="14" rx="1.2"/><rect x="13" y="5" width="8" height="14" rx="1.2"/></symbol>
   <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 5 3 3H7l3-3z"/><path d="M12 12v8"/></symbol>
   <symbol id="i-fold" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
@@ -537,6 +543,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
       <button class="ib" id="zoomIn" title="확대"><svg class="i"><use href="#i-plus"/></svg></button>
       <button class="ib hide-sm" id="zoomFit" title="폭 맞춤"><svg class="i"><use href="#i-fit"/></svg></button>
     </div>
+    <button class="ib" id="flipBtn" title="옆으로 넘기기"><svg class="i"><use href="#i-flip"/></svg></button>
     <button class="ib" id="spreadBtn" title="2페이지 보기"><svg class="i"><use href="#i-two"/></svg></button>
     <button class="ib" id="aiBtn" title="AI 요약 · 질문"><svg class="i"><use href="#i-ai"/></svg><span class="hide-sm">AI</span></button>
     <button class="ib" id="recBtn" title="녹음 듣기 · 녹음 파일과 필기 맞춰 재생"><svg class="i"><use href="#i-rec"/></svg><span class="hide-sm">녹음</span><span class="badge" id="recBadge" hidden></span></button>
@@ -565,6 +572,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     <div class="scroller draw" id="scroller">
       <div class="pages" id="pages"></div>
     </div>
+    <button class="flipnav prev" id="flipPrev" title="앞 쪽 (←)" hidden>‹</button><button class="flipnav next" id="flipNext" title="다음 쪽 (→)" hidden>›</button>
     <div class="memolayer" id="memoLayer"></div>
     <aside class="ai" id="ai" hidden aria-label="AI 요약과 질문">
       <div class="ai-head">
@@ -1726,7 +1734,11 @@ function saveLastPage(now){
 /* ================= layout & rendering ================= */
 const scroller=$('#scroller'), pagesEl=$('#pages');
 function availW(){ return Math.max(200, Math.min(scroller.clientWidth-24, V.spread?2200:980)); }
-function computeBase(){ const aw=availW(); V.base = V.spread ? (aw-18)/2/V.sizes[0][0] : aw/V.sizes[0][0]; }
+function computeBase(){ const aw=availW(); V.base = V.spread ? (aw-18)/2/V.sizes[0][0] : aw/V.sizes[0][0];
+  if(V.flip){ // the whole page on screen, clear of the pen bar when it sits along the bottom
+    const d=$('#dock'); const dr=d && !d.hidden ? d.getBoundingClientRect() : null; const sr=scroller.getBoundingClientRect();
+    const below = dr && dr.width>dr.height && dr.top>sr.top+sr.height/2 ? Math.max(0,sr.bottom-dr.top)+14 : 24;
+    const ah=Math.max(200,scroller.clientHeight-22-below); V.base=Math.min(V.base, ah/V.sizes[0][1]); } }
 function applySizes(){
   for(const P of V.pages){ P.div.style.width=cssW(P.i)+'px'; P.div.style.height=cssH(P.i)+'px'; }
   pagesEl.classList.toggle('two',V.spread);
@@ -2799,14 +2811,38 @@ applyDock();
 function pageTop(i){ return V.pages[i].div.offsetTop; }
 function goToPage(n,smooth){
   n=Math.min(Math.max(1,n|0),V.n); const P=V.pages[n-1]; if(!P) return;
+  if(V.flip){ flipShow(n); return; }
   scroller.scrollTo({top:pageTop(n-1)-12, behavior:smooth?'smooth':'auto'});
   setCur(n);
 }
+/* page-flip view: one page (or one pair in 2-page view) on screen, moved sideways like a book */
+function flipShow(n){
+  if(editing) commitText();
+  const first = V.spread ? (n-1)-((n-1)%2) : n-1;
+  for(const P of V.pages){ const on = P.i===first || (V.spread && P.i===first+1); P.div.classList.toggle('on',on); }
+  scroller.scrollTop=0; scroller.scrollLeft=0; V.cur=0; setCur(first+1); if(document.activeElement!==$('#pageIn')) $('#pageIn').value=first+1;
+  const step=V.spread?2:1; $('#flipPrev').disabled=first<=0; $('#flipNext').disabled=first+step>=V.n;
+  // render what just came into view
+  for(const P of V.pages) if(P.div.classList.contains('on')) { P.visible=true; queueRender(P); }
+}
+function flipBy(d){ if(!V.flip||!V.pages.length) return; const step=V.spread?2:1; const first=V.spread?(V.cur-1)-((V.cur-1)%2):V.cur-1; goToPage(Math.min(V.n,Math.max(1,first+1+d*step)),false); }
+$('#flipPrev').onclick=()=>flipBy(-1); $('#flipNext').onclick=()=>flipBy(1);
+try{ V.flip = localStorage.getItem('desk.flip')==='1'; }catch{}
+function syncFlipBtn(){ const b=$('#flipBtn'); b.title=V.flip?'위아래로 이어 보기':'옆으로 넘기기'; b.querySelector('use').setAttribute('href',V.flip?'#i-scrollv':'#i-flip');
+  pagesEl.classList.toggle('flip',!!V.flip); $('#flipPrev').hidden=$('#flipNext').hidden=!V.flip; }
+syncFlipBtn();
+$('#flipBtn').onclick=()=>{ if(editing) commitText(); V.flip=!V.flip; try{ localStorage.setItem('desk.flip',V.flip?'1':'0'); }catch{} syncFlipBtn(); relayout(); toast(V.flip?'옆으로 넘기기: 화살표, ← → 키, 손가락으로 옆으로 밀기':'위아래로 이어 보기',2200); };
+// a quick sideways swipe with one finger turns the page (not while drawing, not while zoomed in)
+{ let sw=null;
+  scroller.addEventListener('touchstart',e=>{ sw = V.flip && e.touches.length===1 ? {x:e.touches[0].clientX,y:e.touches[0].clientY,t:Date.now(),stylus:e.touches[0].touchType==='stylus'} : null; },{passive:true});
+  scroller.addEventListener('touchend',e=>{ const a=sw; sw=null; if(!a || a.stylus || act || editing) return; if(V.finger && V.tool!=='hand') return;
+    const t=e.changedTouches[0]; const dx=t.clientX-a.x, dy=t.clientY-a.y;
+    if(Date.now()-a.t<700 && Math.abs(dx)>60 && Math.abs(dx)>2*Math.abs(dy) && scroller.scrollWidth<=scroller.clientWidth+4) flipBy(dx<0?1:-1); },{passive:true}); }
 function setCur(n){ if(V.cur===n) return; V.cur=n; if(document.activeElement!==$('#pageIn')) $('#pageIn').value=n; saveLastPage(false); }
 let scrollRaf=0;
 scroller.addEventListener('scroll',()=>{ if(scrollRaf) return; scrollRaf=requestAnimationFrame(()=>{ scrollRaf=0; updateCur(); }); },{passive:true});
 function updateCur(){
-  if(!V.pages.length) return;
+  if(!V.pages.length || V.flip) return;
   const y=scroller.scrollTop+scroller.clientHeight*0.35;
   let lo=0,hi=V.pages.length-1;
   while(lo<hi){ const m=(lo+hi+1)>>1; if(pageTop(m)<=y) lo=m; else hi=m-1; }
@@ -2838,6 +2874,8 @@ try{ V.spread = localStorage.getItem('desk.spread')==='1'; }catch{}
 function syncSpreadBtn(){ const b=$('#spreadBtn'); b.title=V.spread?'1페이지 보기':'2페이지 보기'; b.querySelector('use').setAttribute('href',V.spread?'#i-one':'#i-two'); }
 syncSpreadBtn();
 $('#spreadBtn').onclick=()=>{ if(editing) commitText(); V.spread=!V.spread; try{ localStorage.setItem('desk.spread',V.spread?'1':'0'); }catch{} syncSpreadBtn(); relayout(); toast(V.spread?'2페이지 보기':'1페이지 보기',1400); };
+// opening a document in flip view starts on the remembered page
+new MutationObserver(()=>{ if(V.flip && V.pages.length && !pagesEl.querySelector('.page.on')) flipShow(V.cur||1); }).observe(pagesEl,{childList:true});
 
 document.addEventListener('keydown',e=>{
   if($('#viewer').hidden || e.target.tagName==='INPUT' || e.target.tagName==='TEXTAREA') return;
@@ -2846,6 +2884,8 @@ document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey) && k==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
   if((e.ctrlKey||e.metaKey) && k==='y'){ e.preventDefault(); redo(); return; }
   if(e.ctrlKey||e.metaKey||e.altKey) return;
+  if(V.flip && (e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ')){ e.preventDefault(); flipBy(1); return; }
+  if(V.flip && (e.key==='ArrowLeft'||e.key==='PageUp')){ e.preventDefault(); flipBy(-1); return; }
   if(k==='p') setTool('pen'); else if(k==='h') setTool('hl'); else if(k==='e') setTool('eraser'); else if(k==='v') setTool('hand'); else if(k==='t') setTool('text'); else if(k==='m') newMemo(); else if(k==='c') setTool('capture'); else if(k==='l' && (V.tool==='pen'||V.tool==='hl')) $('#rulerBtn').click();
 });
 

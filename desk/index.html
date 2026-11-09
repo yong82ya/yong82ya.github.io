@@ -650,6 +650,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     <input class="ed-title" id="edTitle" aria-label="문서 이름">
     <div class="seg"><button id="edModeRead" aria-pressed="true">읽기</button><button id="edModeEdit" aria-pressed="false">편집</button><button id="edModePen" aria-pressed="false" title="펜으로 문서 위에 쓰기">필기</button></div>
     <div class="hlg" title="형광펜: 글자를 고르고 색을 누르세요"><button data-hl="#FFF176" style="background:#FFF176" title="노랑 형광"></button><button data-hl="#B9F6CA" style="background:#B9F6CA" title="연두 형광"></button><button data-hl="#FFC1E3" style="background:#FFC1E3" title="분홍 형광"></button><button data-hl="transparent" title="형광 지우기" style="background:linear-gradient(135deg,#fff 45%,#d33 45%,#d33 55%,#fff 55%)"></button></div>
+    <button class="ib" id="edOrient" title="용지 방향"><svg class="i"><use href="#i-one"/></svg><span class="hide-sm">세로</span></button>
     <button class="ib hide-sm" id="edZoomOut" title="작게 보기"><svg class="i"><use href="#i-minus"/></svg></button><button class="ib hide-sm" id="edZoomIn" title="크게 보기"><svg class="i"><use href="#i-plus"/></svg></button>
     <button class="ib" id="edFind" title="찾기 · 바꾸기 (Ctrl+F)"><svg class="i"><use href="#i-search"/></svg><span class="hide-sm">찾기</span></button>
     <button class="ib" id="edAi" title="AI 요약 · 질문"><svg class="i"><use href="#i-ai"/></svg><span class="hide-sm">AI</span></button>
@@ -3561,7 +3562,8 @@ async function imgSrc(bytes, ext){
 async function relMap(zip,path){ const t=await zip.text(path); const m=new Map(); if(!t) return m; for(const r of all(parseXml(t),'Relationship')) m.set(r.getAttribute('Id'),{target:r.getAttribute('Target'),mode:r.getAttribute('TargetMode')}); return m; }
 const HL_NAMES={yellow:'#FFFF00',green:'#00FF00',cyan:'#00FFFF',magenta:'#FF00FF',blue:'#0000FF',red:'#FF0000',darkBlue:'#000080',darkCyan:'#008080',darkGreen:'#008000',darkMagenta:'#800080',darkRed:'#800000',darkYellow:'#808000',darkGray:'#808080',lightGray:'#C0C0C0',black:'#000000'};
 async function docxToHtml(zip){
-  const doc=parseXml(await zip.text('word/document.xml')); const rels=await relMap(zip,'word/_rels/document.xml.rels');
+  const doc=parseXml(await zip.text('word/document.xml'));
+  { const sz=all(doc,'pgSz').pop(); const w=+attr(sz,'w')||0, h=+attr(sz,'h')||0; docxToHtml.land = attr(sz,'orient')==='landscape' || (w>0 && h>0 && w>h); } const rels=await relMap(zip,'word/_rels/document.xml.rels');
   const heads=new Map(); const st=await zip.text('word/styles.xml');
   const styleNum=new Map();
   if(st) for(const s of all(parseXml(st),'style')){ const id=attr(s,'styleId'); const sn=all(s,'numPr')[0]; if(sn) styleNum.set(id,{numId:attr(kid(sn,'numId'),'val'),ilvl:attr(kid(sn,'ilvl'),'val')||'0'}); const nm=(attr(kid(s,'name'),'val')||'').toLowerCase(); let m=nm.match(/heading\s*(\d)|제목\s*(\d)/)||id?.match(/^heading(\d)$/i); if(m) heads.set(id,Math.min(4,+(m[1]||m[2]))); else if(nm==='title'||nm==='제목') heads.set(id,1); }
@@ -3755,8 +3757,10 @@ async function hwpToHtml(bytes){
     flush(); return html;
   }
   let out='';
+  hwpToHtml.land=false;
   for(const s of secs){
     const recs=hwpRecords(await unz(cf.get(s)));
+    if(s===secs[0]){ const pd=recs.find(r=>r.tag===T+57 && r.data.length>=40); if(pd){ const dv=new DataView(pd.data.buffer,pd.data.byteOffset,pd.data.byteLength); hwpToHtml.land=!!(dv.getUint32(36,true)&1); } }
     // paragraphs: PARA_HEADER followed by its own PARA_TEXT / PARA_CHAR_SHAPE (level+1); tables: CTRL_HEADER 'tbl ' then LIST_HEADER per cell
     let i=0;
     const readPara=()=>{ const hd=recs[i]; const lv=hd.level; const pd=new DataView(hd.data.buffer,hd.data.byteOffset,hd.data.byteLength); const psId=hd.data.length>=10?pd.getUint16(8,true):0; i++;
@@ -3906,7 +3910,7 @@ async function blocksToDocx(blocks, title){
     return `<w:p>${pPr?`<w:pPr>${pPr}</w:pPr>`:''}${await runsXml(b.runs)}</w:p>`;
   }
   let body=''; for(const b of blocks) body+=await blockXml(b);
-  const document=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${W}><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1304" w:bottom="1440" w:left="1304" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+  const document=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${W}><w:body>${body}<w:sectPr>${PAGE.W>PAGE.H?'<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>':'<w:pgSz w:w="11906" w:h="16838"/>'}<w:pgMar w:top="1440" w:right="1304" w:bottom="1440" w:left="1304" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr></w:body></w:document>`;
   const lvl=(i,fmt,txt)=>`<w:lvl w:ilvl="${i}"><w:start w:val="1"/><w:numFmt w:val="${fmt}"/><w:lvlText w:val="${txt}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="${720+i*400}" w:hanging="360"/></w:pPr>${fmt==='bullet'?'<w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:hint="default"/></w:rPr>':''}</w:lvl>`;
   const bullets=['•','◦','▪','•','◦'];
   const numbering=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${W}><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/>${[0,1,2,3,4].map(i=>lvl(i,'bullet',bullets[i]).replace('<w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:hint="default"/></w:rPr>','')).join('')}</w:abstractNum><w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="hybridMultilevel"/>${[0,1,2,3,4].map(i=>lvl(i,['decimal','lowerLetter','lowerRoman','decimal','lowerLetter'][i],`%${i+1}.`)).join('')}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>${nums.map(n=>`<w:num w:numId="${n}"><w:abstractNumId w:val="1"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>`).join('')}</w:numbering>`;
@@ -4027,7 +4031,7 @@ async function storeOriginal(meta,file){
   try{ const ids=[]; const n=Math.max(1,Math.ceil(file.size/PART_BYTES)); for(let i=0;i<n;i++){ const b64=await blobToB64(file.slice(i*PART_BYTES,(i+1)*PART_BYTES)); ids.push((await cap.assets.upload(new Blob([b64],{type:'text/plain'}),{type:'text/plain'})).id); } meta.orig=ids; }catch(e){ console.warn('orig upload',e); }
 }
 async function fetchParts(ids,size){ const out=new Uint8Array(size); let off=0; for(const id of ids){ const t=await (await fetch('./_blob/'+id)).text(); off+=b64ToBytes(t.trim(),out,off); } return out.subarray(0,off); }
-async function writeEntry(m){ if(!cap.db) return; const body={kind:m.kind,fmt:m.fmt,name:m.name,size:m.size,addedAt:m.addedAt,openedAt:m.openedAt,orig:m.orig||null,chunks:m.chunks||0,edits:m.edits||null,folder:folderForNew(m)}; try{ await docRef(m.id).set(body); }catch(e){ console.warn('entry',e); } }
+async function writeEntry(m){ if(!cap.db) return; const body={kind:m.kind,fmt:m.fmt,name:m.name,size:m.size,addedAt:m.addedAt,openedAt:m.openedAt,orig:m.orig||null,chunks:m.chunks||0,edits:m.edits||null,folder:folderForNew(m),land:!!m.land}; try{ await docRef(m.id).set(body); }catch(e){ console.warn('entry',e); } }
 async function openOtherFile(file){
   const ext=extOf(file.name);
   if(ext==='doc'||ext==='xls'||ext==='ppt'){ toast('옛 오피스 형식은 아직 열 수 없습니다. DOCX·XLSX로 저장해서 열어 주세요.',4500); return; }
@@ -4054,6 +4058,7 @@ async function openOtherFile(file){
       else if(fmt==='hwp') html=await hwpToHtml(bytes);
     }catch(e){ console.warn(e); hideEditorBusy(); $('#editor').hidden=true; $('#home').hidden=false;
       const why=String(e?.message||''); toast(why==='hwp-password'?'암호가 걸린 한글 파일은 열 수 없습니다.':why==='hwp-distribution'?'배포용으로 잠긴 한글 파일은 열 수 없습니다.':why==='not-cfb'||why==='not-hwp5'?'한글 97 같은 아주 옛 형식은 열 수 없습니다. 한글에서 HWPX로 저장해서 열어 주세요.':'문서를 읽지 못했습니다. 파일이 손상되지 않았는지 확인해 주세요.',5000); return; }
+    if(fmt==='docx') meta.land=!!docxToHtml.land; else if(fmt==='hwp') meta.land=!!hwpToHtml.land;
     await openDocEntry(meta, sanitize(html||'<p><br></p>'));
     if(fmt==='hwpx') ED.tplBytes=bytes;
   }
@@ -4092,6 +4097,9 @@ function pageStarts(items,M,IN){
   return starts;
 }
 const PAGE={W:794,H:1123,M:68}; PAGE.IN=PAGE.H-2*PAGE.M;
+const DW=794;   // handwriting unit: N across a portrait page width, whatever the paper direction
+function setPage(land){ PAGE.W=land?1123:794; PAGE.H=land?794:1123; PAGE.IN=PAGE.H-2*PAGE.M; paper.style.width=PAGE.W+'px';
+  const b=$('#edOrient'); if(b){ b.querySelector('span').textContent=land?'가로':'세로'; b.title=land?'용지 가로 (누르면 세로로)':'용지 세로 (누르면 가로로)'; } }
 // A page picture cannot see the fonts the app downloaded, and a stand-in font wraps lines differently
 // (handwriting then no longer sits on its line). So the fonts in use travel inside the picture.
 const FONT_CACHE=new Map();
@@ -4179,7 +4187,7 @@ async function paperToPdf(step){
     const end=Math.max(art.scrollHeight-M, ...uItems.map(x=>x.bot));
     const pageOfY=y=>{ let p=0; for(let j=1;j<starts.length;j++) if(y>=starts[j]) p=j; return p; };
     // handwriting: screen paragraph → same paragraph in the picture
-    const scr=dTops(); const kN=N/W; const byKey=new Map(); kids.forEach((k,i)=>byKey.set(k.dataset.k,i));
+    const scr=dTops(); const kN=N/DW; const byKey=new Map(); kids.forEach((k,i)=>byKey.set(k.dataset.k,i));
     const inkY=st=>{   // returns the stroke's vertical shift in picture px (strokes are drawn in N units)
       let i=byKey.get(st.k), sTop, sBot;
       if(i!=null){ const S=scr.list[i]; sTop=S?.top; sBot=S?.bot; }
@@ -4207,14 +4215,14 @@ async function paperToPdf(step){
       ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
       ctx.drawImage(img,0,M*SC,PW,PH);
       await new Promise(r=>setTimeout(r,fonts.css?150:30)); ctx.fillRect(0,0,cv.width,cv.height); ctx.drawImage(img,0,M*SC,PW,PH);   // Safari sometimes paints fonts only on the second draw
-      if(DI.ink.length){ const k=W/N; ctx.save(); ctx.beginPath(); ctx.rect(0,0,cv.width,cv.height); ctx.clip(); ctx.lineCap='round'; ctx.lineJoin='round';
+      if(DI.ink.length){ const k=DW/N; ctx.save(); ctx.beginPath(); ctx.rect(0,0,cv.width,cv.height); ctx.clip(); ctx.lineCap='round'; ctx.lineJoin='round';
         // each stroke belongs to the one page its middle falls on, so nothing is drawn twice across a page break
         for(const st of DI.ink){ const ty=inkY(st); const mid=ty+((st.y0??0)+(st.y1??0))/2*k; if(pageOfY(mid)!==i) continue;
           ctx.setTransform(SC*k,0,0,SC*k,0,SC*(M-a+ty)); drawStroke(ctx,st); } ctx.restore(); }
       const jb=await new Promise((res,rej)=>{ try{ cv.toBlob(x=>x?res(x):rej(new Error('blob')),'image/jpeg',0.9); }catch(e){ rej(e); } });
       cv.width=cv.height=0;
       const jp=await pdf.embedJpg(new Uint8Array(await jb.arrayBuffer()));
-      const pg=pdf.addPage([595.28,841.89]); pg.drawImage(jp,{x:0,y:0,width:595.28,height:841.89});
+      const PWpt=W>H?841.89:595.28, PHpt=W>H?595.28:841.89; const pg=pdf.addPage([PWpt,PHpt]); pg.drawImage(jp,{x:0,y:0,width:PWpt,height:PHpt});
     }
     pdf.setTitle(($('#edTitle')?.value||'문서').trim());
     paperToPdf.fontsOk=fonts.ok;
@@ -4223,7 +4231,7 @@ async function paperToPdf(step){
 }
 async function openDocEntry(meta, html){
   showEditorBusy('문서를 여는 중');
-  ED.meta=meta; ED.tplBytes=null; if(AI.src==='doc'){ AI.sums=[]; AI.chat=[]; AI.segs=null; $('#ai').hidden=true; askIntro(); }
+  ED.meta=meta; ED.tplBytes=null; setPage(!!meta.land); if(AI.src==='doc'){ AI.sums=[]; AI.chat=[]; AI.segs=null; $('#ai').hidden=true; askIntro(); }
   if(html===undefined){
     html='';
     try{ if(cap.db && meta.chunks){ const snap=await docRef(meta.id).collection('content').limit(200).get(); html=snap.docs.map(d=>d.data()).sort((a,b)=>a.i-b.i).map(d=>d.html).join(''); } }catch(e){ console.warn(e); toast('내용을 불러오지 못했습니다'); }
@@ -4244,6 +4252,7 @@ function setEdMode(m){
   if(pen){ getSelection().removeAllRanges(); dBar(); }
   if(edit) paper.focus({preventScroll:true});
 }
+$('#edOrient').onclick=async()=>{ const m=ED.meta; if(!m) return; m.land=!m.land; setPage(m.land); dFit(); dSoon(); toast(m.land?'용지를 가로로 바꿨어요. PDF와 워드 파일도 가로로 나와요':'용지를 세로로 바꿨어요',2500); if(cap.db && !m.local) await writeEntry(m); };
 $('#edModeRead').onclick=()=>setEdMode('read'); $('#edModeEdit').onclick=()=>setEdMode('edit'); $('#edModePen').onclick=()=>setEdMode('pen');
 // Typing in a form: keep the table's cells the size they are now, so columns do not jump about as text comes and goes.
 // A cell still grows if its text needs more room, like in 한글/Word, but never shrinks or squeezes its neighbours.
@@ -4280,14 +4289,14 @@ const dKey=()=>Math.random().toString(36).slice(2,10);
 function dKeys(){ const seen=new Set(); for(const b of paper.children){ let k=b.dataset.k; if(!k || seen.has(k)){ k=dKey(); b.dataset.k=k; ED.keysNew=true; } seen.add(k); } }
 function dScale(){ const r=paper.getBoundingClientRect(); return {r, s:r.width/PAGE.W}; }
 // paragraph tops in N units (page-width based), from what is on screen
-function dTops(){ const {r,s}=dScale(); const k=N/PAGE.W; const m=new Map(); const list=[];
+function dTops(){ const {r,s}=dScale(); const k=N/DW; const m=new Map(); const list=[];
   for(const b of paper.children){ const br=b.getBoundingClientRect(); const top=(br.top-r.top)/s, bot=(br.bottom-r.top)/s; m.set(b.dataset.k,top*k); list.push({k:b.dataset.k,top:top*k,bot:bot*k}); }
   m.list=list; return m; }
 const dTopOf=(st,tops)=>tops.has(st.k)?tops.get(st.k):st.ay;
 function dFit(){ const w=dSc.clientWidth-24; const fit=w>0?Math.min(1,w/PAGE.W):1; paper.style.zoom=String(ED.zoom*fit); dSoon(); }
 // page lines + strokes
 function dSizeCv(cv){ const dpr=devicePixelRatio||1; const w=Math.round(cv.clientWidth*dpr), h=Math.round(cv.clientHeight*dpr); if(cv.width!==w||cv.height!==h){ cv.width=w; cv.height=h; } return dpr; }
-function dXform(ctx,cv){ const dpr=dSizeCv(cv); const cr=cv.getBoundingClientRect(); const {r,s}=dScale(); const k=s*PAGE.W/N*dpr; return {dpr,cr,r,s,k,ox:(r.left-cr.left)*dpr,oy:(r.top-cr.top)*dpr}; }
+function dXform(ctx,cv){ const dpr=dSizeCv(cv); const cr=cv.getBoundingClientRect(); const {r,s}=dScale(); const k=s*DW/N*dpr; return {dpr,cr,r,s,k,ox:(r.left-cr.left)*dpr,oy:(r.top-cr.top)*dpr}; }
 function dDraw(){
   DI.raf=0; if($('#editor').hidden) return;
   const ctx=dIn.getContext('2d'); const X=dXform(ctx,dIn); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,dIn.width,dIn.height);
@@ -4320,7 +4329,7 @@ function dBar(){
   const t=DI.tool==='eraser'?null:DI.tool; sw.hidden=sz.hidden=!t; $('#dFinger').setAttribute('aria-pressed',String(!!V.finger)); $('#editor').classList.toggle('dfinger',!!V.finger);
   if(!t) return; const set=t==='hl'?HL:PEN;
   for(const c of set.colors){ const b=el('button'); b.style.background=c; b.title='색'; b.setAttribute('aria-pressed',String(V.color[t]===c)); b.onclick=()=>{ V.color[t]=c; rememberTools(); dBar(); }; sw.append(b); }
-  set.sizes.forEach((w,i)=>{ const b=el('button'); b.title=['가늘게','보통','굵게'][i]; const d=el('span'); const px=Math.max(3,Math.min(18,w*PAGE.W/N*(t==='hl'?0.5:1.6))); d.style.width=d.style.height=px+'px'; if(t==='hl'){ d.style.background=V.color.hl; d.style.borderRadius='3px'; } b.append(d); b.setAttribute('aria-pressed',String(V.size[t]===i)); b.onclick=()=>{ V.size[t]=i; rememberTools(); dBar(); }; sz.append(b); });
+  set.sizes.forEach((w,i)=>{ const b=el('button'); b.title=['가늘게','보통','굵게'][i]; const d=el('span'); const px=Math.max(3,Math.min(18,w*DW/N*(t==='hl'?0.5:1.6))); d.style.width=d.style.height=px+'px'; if(t==='hl'){ d.style.background=V.color.hl; d.style.borderRadius='3px'; } b.append(d); b.setAttribute('aria-pressed',String(V.size[t]===i)); b.onclick=()=>{ V.size[t]=i; rememberTools(); dBar(); }; sz.append(b); });
 }
 document.querySelectorAll('#edInkBar [data-dt]').forEach(b=>b.onclick=()=>{ DI.tool=b.dataset.dt; dBar(); });
 $('#dFinger').onclick=()=>{ V.finger=!V.finger; rememberTools(); dBar(); toast(V.finger?'손가락으로도 써요. 넘길 때는 두 손가락으로':'손가락은 스크롤, 펜슬로만 써요',2500); };
@@ -4328,7 +4337,7 @@ $('#dUndo').onclick=()=>{ const u=DI.undo.pop(); if(!u) return; DI.ink=DI.ink.fi
 $('#dRedo').onclick=()=>{ const u=DI.redo.pop(); if(!u) return; DI.ink=DI.ink.filter(x=>!u.rem.includes(x)).concat(u.add); DI.undo.push(u); dChanged(); };
 function dChanged(){ dSoon(); clearTimeout(DI.saveT); DI.saveT=setTimeout(saveDocInk,1000); edPill('pending'); }
 // input
-function dPt(e){ const {r,s}=dScale(); const k=N/PAGE.W; return [Math.round((e.clientX-r.left)/s*k), Math.round((e.clientY-r.top)/s*k)]; }
+function dPt(e){ const {r,s}=dScale(); const k=N/DW; return [Math.round((e.clientX-r.left)/s*k), Math.round((e.clientY-r.top)/s*k)]; }
 function dAllowed(e){ if(ED.mode!=='pen') return false; if(e.pointerType==='pen') return true; if(e.pointerType==='mouse') return e.button===0; if(e.pointerType==='touch') return !!V.finger; return false; }
 dSc.addEventListener('touchstart',e=>{ if(ED.mode!=='pen') return; for(const t of e.changedTouches) if(t.touchType==='stylus'){ e.preventDefault(); return; } },{passive:false});
 dSc.addEventListener('pointerdown',e=>{
@@ -4939,7 +4948,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='11-09 15:22';
+const DESK_BUILD='11-09 15:32';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();

@@ -155,6 +155,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .fcard.add{border-style:dashed;align-items:center;justify-content:center;color:var(--muted);background:transparent}
 .fcard.add .plus{font-size:24px;line-height:1}
 .fcard.loose .fi{background:var(--muted);opacity:.45}
+.tbsize{display:flex;gap:12px;margin-top:6px}.tbsize label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);flex:1}.tbsize input{padding:10px 12px;border-radius:10px;border:1px solid var(--line);font-size:16px;background:var(--surface);color:var(--ink)}
 .phord{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-top:8px;max-height:56vh;overflow:auto;padding:2px}
 .phit{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg);display:flex;flex-direction:column}
 .phit.drag{opacity:.4}
@@ -656,7 +657,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     <select id="edLine" title="줄 간격" aria-label="줄 간격"><option value="">줄 간격</option><option value="100">100%</option><option value="130">130%</option><option value="160">160%</option><option value="180">180%</option><option value="200">200%</option><option value="250">250%</option><option value="300">300%</option></select>
     <button class="eb" id="edGap" title="자간 · 문단 간격">간격</button>
     <button class="eb" data-cmd="insertUnorderedList" title="글머리 목록">•</button><button class="eb" data-cmd="insertOrderedList" title="번호 목록">1.</button><button class="eb" data-cmd="outdent" title="내어쓰기">⇠</button><button class="eb" data-cmd="indent" title="들여쓰기">⇢</button>
-    <button class="eb" id="edTable" title="표 넣기 (3×3)">표</button><button class="eb" data-cmd="insertHorizontalRule" title="가로줄">―</button><button class="eb" id="edSym" title="특수 기호">※</button>
+    <button class="eb" id="edTable" title="표 넣기 · 표 안에서 누르면 행/열 추가·지우기, 표 지우기">표</button><button class="eb" data-cmd="insertHorizontalRule" title="가로줄">―</button><button class="eb" id="edSym" title="특수 기호">※</button>
     <label class="eb" for="edImgIn" title="그림 넣기">그림</label><input type="file" id="edImgIn" accept="image/*" class="sr">
     <button class="eb" data-cmd="removeFormat" title="서식 지우기">지움</button>
   </div>
@@ -4088,7 +4089,43 @@ $('#fdOne').onclick=()=>{ if(ED.mode!=='edit' || FD.i<0) return; const r=FD.hits
 $('#fdAll').onclick=()=>{ if(ED.mode!=='edit' || !FD.hits.length) return; const n=FD.hits.length; for(let i=n-1;i>=0;i--){ const r=FD.hits[i]; r.deleteContents(); r.insertNode(document.createTextNode($('#fdR').value)); } paper.normalize(); paper.dispatchEvent(new Event('input')); fdSearch(); toast(`${n}곳을 바꿨습니다`); };
 document.addEventListener('keydown',e=>{ if($('#editor').hidden) return; if((e.ctrlKey||e.metaKey) && (e.key==='f'||e.key==='h')){ e.preventDefault(); fdOpen(); } if(e.key==='Escape' && !$('#edPop').hidden) $('#edPop').hidden=true; });
 document.querySelectorAll('#editor [data-hl]').forEach(b=>{ b.addEventListener('mousedown',e=>e.preventDefault()); b.onclick=()=>withTempEdit(()=>{ document.execCommand('styleWithCSS',false,true); const v=b.dataset.hl; if(!document.execCommand('hiliteColor',false,v)) document.execCommand('backColor',false,v); }); });
-$('#edTable').onclick=()=>{ const r=3,c=3; let h='<table>'; for(let i=0;i<r;i++){ h+='<tr>'; for(let j=0;j<c;j++) h+='<td><br></td>'; h+='</tr>'; } cmd('insertHTML',h+'</table><p><br></p>'); };
+// remember where the cursor was in the document: on a tablet, tapping a button can take it away
+let tbRange=null;
+document.addEventListener('selectionchange',()=>{ const sel=getSelection(); if(sel.rangeCount && paper.contains(sel.anchorNode) && ED.mode==='edit') tbRange=sel.getRangeAt(0).cloneRange(); });
+function tbRestore(){ if(!tbRange || !paper.contains(tbRange.startContainer)) return false; paper.focus({preventScroll:true}); const sel=getSelection(); sel.removeAllRanges(); sel.addRange(tbRange); return true; }
+// a new table: choose how many rows and columns
+async function insertTable(){
+  const box=el('div','tbsize'); const mk=(lab,v)=>{ const l=el('label',null,lab); const i=el('input'); i.type='number'; i.min='1'; i.max='40'; i.value=String(v); i.inputMode='numeric'; l.append(i); box.append(l); return i; };
+  const pr=sheet('표 넣기','줄(행)과 칸(열) 수를 정하세요. 나중에 표 안에서 "표"를 누르면 더 넣거나 지울 수 있어요.',[{label:'취소',value:null},{label:'넣기',value:'ok',cls:'btn-primary'}]);
+  const ri=mk('줄 (행)',3), ci=mk('칸 (열)',3); $('#sheetBody').append(box);
+  if(await pr!=='ok') return;
+  const r=Math.min(40,Math.max(1,parseInt(ri.value,10)||3)), c=Math.min(12,Math.max(1,parseInt(ci.value,10)||3));
+  let h='<table>'; for(let i=0;i<r;i++){ h+='<tr>'; for(let j=0;j<c;j++) h+='<td><br></td>'; h+='</tr>'; }
+  tbRestore(); cmd('insertHTML',h+'</table><p><br></p>');
+}
+// "표" inside a table: tools for that table (rows, columns, delete); elsewhere it puts a new 3×3 table in
+function tableTools(td,tb){
+  const tr=td.closest('tr'); const ci=[...tr.children].indexOf(td);
+  const changed=(focusEl)=>{ paper.dispatchEvent(new Event('input')); if(focusEl){ const r=document.createRange(); r.selectNodeContents(focusEl); r.collapse(true); const sel=getSelection(); sel.removeAllRanges(); sel.addRange(r); } };
+  const newCell=()=>{ const c=document.createElement('td'); c.innerHTML='<br>'; return c; };
+  return {
+    rowBelow(){ const r=document.createElement('tr'); for(let i=0;i<tr.children.length;i++) r.append(newCell()); tr.after(r); changed(r.children[ci]||r.firstChild); },
+    rowAbove(){ const r=document.createElement('tr'); for(let i=0;i<tr.children.length;i++) r.append(newCell()); tr.before(r); changed(r.children[ci]||r.firstChild); },
+    colRight(){ for(const row of tb.rows){ const c=row.children[Math.min(ci,row.children.length-1)]; (c?c.after.bind(c):row.append.bind(row))(newCell()); } tb.style.tableLayout=''; tb.style.width=''; for(const c of tb.querySelectorAll('td,th')) c.style.width=''; changed(tr.children[ci+1]); },
+    rowDel(){ if(tb.rows.length<=1) return this.tableDel(); const nx=tr.nextElementSibling||tr.previousElementSibling; tr.remove(); changed(nx?.children[Math.min(ci,nx.children.length-1)]); },
+    colDel(){ if(tr.children.length<=1) return this.tableDel(); for(const row of [...tb.rows]){ const c=row.children[Math.min(ci,row.children.length-1)]; c?.remove(); if(!row.children.length) row.remove(); } tb.style.tableLayout=''; tb.style.width=''; for(const c of tb.querySelectorAll('td,th')) c.style.width=''; changed(tr.children[Math.max(0,ci-1)]); },
+    tableDel(){ const p=document.createElement('p'); p.innerHTML='<br>'; tb.replaceWith(p); changed(p); },
+  };
+}
+$('#edTable').addEventListener('mousedown',e=>e.preventDefault());
+$('#edTable').onclick=async()=>{
+  const n=(getSelection().rangeCount && paper.contains(getSelection().anchorNode)) ? getSelection().anchorNode : tbRange?.startContainer; const at=n&&(n.nodeType===1?n:n.parentElement); const td=at?.closest?.('td,th'); const tb=td?.closest('table');
+  if(!tb || !paper.contains(tb)){ insertTable(); return; }
+  const T=tableTools(td,tb);
+  const v=await sheet('표 고치기','커서가 있는 칸을 기준으로 합니다. 되돌리려면 편집 줄의 되돌리기를 쓰세요.',
+    [{label:'닫기',value:null},{label:'위에 행',value:'rowAbove'},{label:'아래에 행',value:'rowBelow'},{label:'오른쪽에 열',value:'colRight'},{label:'행 지우기',value:'rowDel'},{label:'열 지우기',value:'colDel'},{label:'표 지우기',value:'tableDel',cls:'btn-danger'}]);
+  if(v && T[v]){ if(v==='tableDel' && !(await sheet('표를 지울까요?','표 안의 내용도 함께 지워집니다.',[{label:'취소',value:false},{label:'지우기',value:true,cls:'btn-danger'}]))) return; T[v](); toast({rowAbove:'행을 넣었어요',rowBelow:'행을 넣었어요',colRight:'열을 넣었어요',rowDel:'행을 지웠어요',colDel:'열을 지웠어요',tableDel:'표를 지웠어요'}[v],1800); }
+};
 $('#edImgIn').onchange=async e=>{ const f=e.target.files[0]; e.target.value=''; if(!f) return; const src=await imgSrc(new Uint8Array(await f.arrayBuffer()),extOf(f.name)); cmd('insertImage',src); };
 paper.addEventListener('paste',e=>{
   if(paper.contentEditable!=='true') return; const cd=e.clipboardData; if(!cd) return;

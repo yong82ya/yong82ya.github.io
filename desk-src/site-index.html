@@ -158,7 +158,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .phord{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-top:8px;max-height:56vh;overflow:auto;padding:2px}
 .phit{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg);display:flex;flex-direction:column}
 .phit.drag{opacity:.4}
-.phit img{width:100%;aspect-ratio:3/4;object-fit:cover;background:#ddd;display:block;pointer-events:none}
+.phit img{width:100%;aspect-ratio:3/4;object-fit:contain;transition:transform .15s;background:#ddd;display:block;pointer-events:none}
 .phn{position:absolute;left:6px;top:6px;background:rgba(0,0,0,.65);color:#fff;font-size:12px;border-radius:999px;padding:1px 8px}
 .phbar{display:flex}.phbar button{flex:1;height:34px;font-size:14px;border-top:1px solid var(--line)}.phbar button+button{border-left:1px solid var(--line)}.phbar button:disabled{opacity:.3}
 .fhint{display:flex;justify-content:flex-end;padding:8px 14px;border-top:1px solid var(--line)}
@@ -1000,20 +1000,21 @@ async function bundleImages(files){
 // before bundling: the pictures in a row, to put in page order (arrows, or drag on a computer) and drop unwanted ones
 function orderPhotos(files){
   return new Promise(res=>{
-    let list=files.map(f=>({f,url:URL.createObjectURL(f)}));
+    let list=files.map(f=>({f,url:URL.createObjectURL(f),rot:0}));
     const done=v=>{ for(const x of list) setTimeout(()=>URL.revokeObjectURL(x.url),2000); res(v); };
-    sheet('쪽 순서 정하기','PDF에 들어갈 순서예요. 화살표로 옮기고, 필요 없는 사진은 ✕로 빼세요.',[{label:'취소',value:null},{label:'이 순서로 PDF 만들기',value:'ok',cls:'btn-primary'}])
-      .then(v=>done(v==='ok' && list.length ? list.map(x=>x.f) : null));
+    sheet('쪽 순서 정하기','PDF에 들어갈 순서예요. 화살표로 옮기고, ⟳로 돌리고, 필요 없는 사진은 ✕로 빼세요.',[{label:'취소',value:null},{label:'이 순서로 PDF 만들기',value:'ok',cls:'btn-primary'}])
+      .then(v=>done(v==='ok' && list.length ? list.map(x=>({f:x.f,rot:x.rot})) : null));
     const box=el('div','phord'); $('#sheetBody').append(box);
     let dragI=-1;
     const draw=()=>{ box.replaceChildren();
       list.forEach((x,i)=>{ const it=el('div','phit'); it.draggable=true;
-        const im=el('img'); im.src=x.url; im.alt=''; im.loading='lazy';
+        const im=el('img'); im.src=x.url; im.alt=''; im.loading='lazy'; if(x.rot) im.style.transform=`rotate(${x.rot}deg)${x.rot%180?' scale(.75)':''}`;
         const n=el('span','phn',String(i+1)+'쪽');
         const bar=el('div','phbar');
         const mv=(lab,t,fn,dis)=>{ const b=el('button',null,lab); b.title=t; b.disabled=!!dis; b.onclick=e=>{ e.preventDefault(); fn(); draw(); }; bar.append(b); };
         mv('◀','앞으로',()=>{ [list[i-1],list[i]]=[list[i],list[i-1]]; },i===0);
         mv('▶','뒤로',()=>{ [list[i+1],list[i]]=[list[i],list[i+1]]; },i===list.length-1);
+        mv('⟳','오른쪽으로 돌리기',()=>{ x.rot=(x.rot+90)%360; });
         mv('✕','빼기',()=>{ URL.revokeObjectURL(x.url); list.splice(i,1); },list.length<=1);
         it.ondragstart=()=>{ dragI=i; it.classList.add('drag'); };
         it.ondragend=()=>it.classList.remove('drag');
@@ -1030,11 +1031,12 @@ async function bundleImagesNow(files){
     const PDFLib=await loadPdfLib(); const doc=await PDFLib.PDFDocument.create(); let n=0;
     for(let i=0;i<files.length;i++){
       $('#busyText').textContent=`사진을 PDF로 묶는 중 ${i+1}/${files.length}`;
-      const f=files[i]; let bmp=null;
+      const f=files[i].f||files[i], rot=files[i].rot||0; let bmp=null;
       try{ bmp=await createImageBitmap(f,{imageOrientation:'from-image'}); }catch{ try{ bmp=await createImageBitmap(f); }catch{} }
       if(!bmp){ try{ const url=URL.createObjectURL(f); const im=new Image(); await new Promise((r,j)=>{ im.onload=r; im.onerror=j; im.src=url; }); bmp=im; setTimeout(()=>URL.revokeObjectURL(url),1000); }catch{ toast(`${f.name}은(는) 열 수 없는 그림입니다`,3000); continue; } }
       // scanner apps already cropped and cleaned the page: keep it as is, only cap the size
-      const c=fitCanvas(bmp,3500); bmp.close?.();
+      let c=fitCanvas(bmp,3500); bmp.close?.();
+      if(rot){ const r=document.createElement('canvas'); const side=rot%180!==0; r.width=side?c.height:c.width; r.height=side?c.width:c.height; const g=r.getContext('2d'); g.translate(r.width/2,r.height/2); g.rotate(rot*Math.PI/180); g.drawImage(c,-c.width/2,-c.height/2); c.width=c.height=0; c=r; }
       const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.92)); const img=await doc.embedJpg(new Uint8Array(await blob.arrayBuffer()));
       const W=595.28, H=W*c.height/c.width; doc.addPage([W,H]).drawImage(img,{x:0,y:0,width:W,height:H}); c.width=c.height=0; n++;
     }

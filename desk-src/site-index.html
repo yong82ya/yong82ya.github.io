@@ -155,6 +155,12 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .fcard.add{border-style:dashed;align-items:center;justify-content:center;color:var(--muted);background:transparent}
 .fcard.add .plus{font-size:24px;line-height:1}
 .fcard.loose .fi{background:var(--muted);opacity:.45}
+.phord{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-top:8px;max-height:56vh;overflow:auto;padding:2px}
+.phit{position:relative;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg);display:flex;flex-direction:column}
+.phit.drag{opacity:.4}
+.phit img{width:100%;aspect-ratio:3/4;object-fit:cover;background:#ddd;display:block;pointer-events:none}
+.phn{position:absolute;left:6px;top:6px;background:rgba(0,0,0,.65);color:#fff;font-size:12px;border-radius:999px;padding:1px 8px}
+.phbar{display:flex}.phbar button{flex:1;height:34px;font-size:14px;border-top:1px solid var(--line)}.phbar button+button{border-left:1px solid var(--line)}.phbar button:disabled{opacity:.3}
 .fhint{display:flex;justify-content:flex-end;padding:8px 14px;border-top:1px solid var(--line)}
 .fldbar{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
 .fldbar b{font-size:17px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -980,7 +986,34 @@ $('#bundleIn').addEventListener('change', e=>{ const fs=[...e.target.files]; e.t
 let bundling=false;
 async function bundleImages(files){
   if(bundling){ toast('지금 PDF로 묶는 중입니다. 잠시만 기다려 주세요'); return; } bundling=true;
-  try{ await bundleImagesNow(files); } finally{ bundling=false; }
+  try{ if(files.length>1){ files=await orderPhotos(files); if(!files) return; } await bundleImagesNow(files); } finally{ bundling=false; }
+}
+// before bundling: the pictures in a row, to put in page order (arrows, or drag on a computer) and drop unwanted ones
+function orderPhotos(files){
+  return new Promise(res=>{
+    let list=files.map(f=>({f,url:URL.createObjectURL(f)}));
+    const done=v=>{ for(const x of list) setTimeout(()=>URL.revokeObjectURL(x.url),2000); res(v); };
+    sheet('쪽 순서 정하기','PDF에 들어갈 순서예요. 화살표로 옮기고, 필요 없는 사진은 ✕로 빼세요.',[{label:'취소',value:null},{label:'이 순서로 PDF 만들기',value:'ok',cls:'btn-primary'}])
+      .then(v=>done(v==='ok' && list.length ? list.map(x=>x.f) : null));
+    const box=el('div','phord'); $('#sheetBody').append(box);
+    let dragI=-1;
+    const draw=()=>{ box.replaceChildren();
+      list.forEach((x,i)=>{ const it=el('div','phit'); it.draggable=true;
+        const im=el('img'); im.src=x.url; im.alt=''; im.loading='lazy';
+        const n=el('span','phn',String(i+1)+'쪽');
+        const bar=el('div','phbar');
+        const mv=(lab,t,fn,dis)=>{ const b=el('button',null,lab); b.title=t; b.disabled=!!dis; b.onclick=e=>{ e.preventDefault(); fn(); draw(); }; bar.append(b); };
+        mv('◀','앞으로',()=>{ [list[i-1],list[i]]=[list[i],list[i-1]]; },i===0);
+        mv('▶','뒤로',()=>{ [list[i+1],list[i]]=[list[i],list[i+1]]; },i===list.length-1);
+        mv('✕','빼기',()=>{ URL.revokeObjectURL(x.url); list.splice(i,1); },list.length<=1);
+        it.ondragstart=()=>{ dragI=i; it.classList.add('drag'); };
+        it.ondragend=()=>it.classList.remove('drag');
+        it.ondragover=e=>e.preventDefault();
+        it.ondrop=e=>{ e.preventDefault(); if(dragI<0||dragI===i) return; const [m]=list.splice(dragI,1); list.splice(i,0,m); dragI=-1; draw(); };
+        it.append(im,n,bar); box.append(it); });
+    };
+    draw();
+  });
 }
 async function bundleImagesNow(files){
   showBusy(`사진 ${files.length}장을 PDF로 묶는 중`);

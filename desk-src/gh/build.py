@@ -146,7 +146,7 @@ rep("/* ================= boot ================= */", "const DESK_BUILD='"+BUILD
 rep("/* ================= boot ================= */", (ROOT/'src'/'drive-ui.js').read_text(encoding='utf-8') + "\n/* ================= boot ================= */")
 rep("/* ================= boot ================= */", (ROOT/'src'/'share.js').read_text(encoding='utf-8') + "\n/* ================= boot ================= */")
 rep("  await loadLibrary();\n})();", "  await loadLibrary();\n  deskShareIn();\n})();")
-rep("  item('💾','저장 공간'", "  if(window.DRIVE) item('☁','구글 드라이브 동기화', !DRIVE.isOn()?'꺼짐 · 노트북·아이패드·폰을 이어 주고 스캔함을 받습니다':(DRIVE.state.err==='auth'?'다시 연결이 필요합니다':'켜짐 · '+agoText(DRIVE.state.last)), ()=>openDrivePanel());\n  item('✨','AI 연결 (제미나이)', DESK_AI.hasKey()?'켜짐 · 이 앱에서 요약과 질문이 됩니다':'꺼짐 · 무료 키를 넣으면 이 앱에서 바로 요약과 질문', ()=>openAiPanel());\n  item('💾','저장 공간'")
+rep("  item('💾','저장 공간'", "  if(window.DRIVE) item('☁','구글 드라이브 동기화', !DRIVE.isOn()?'꺼짐 · 노트북·아이패드·폰을 이어 주고 스캔함을 받습니다':(DRIVE.state.err==='auth'?'다시 연결이 필요합니다':'켜짐 · '+agoText(DRIVE.state.last)), ()=>openDrivePanel());\n  item('✨','AI 연결 (Groq · 제미나이)', DESK_AI.hasKey()?'켜짐 · '+[DESK_AI.hasGroq()?'Groq':'',DESK_AI.hasGemini()?'제미나이':''].filter(Boolean).join(' + '):'꺼짐 · 무료 키를 넣으면 이 앱에서 바로 요약과 질문', ()=>openAiPanel());\n  item('💾','저장 공간'")
 rep("  body.append(list,inp);\n", "  body.append(list,inp); body.append(Object.assign(el('p'),{textContent:'앱 버전 '+DESK_BUILD,style:'margin:10px 0 0;font-size:12px;color:var(--muted);text-align:right'}));\n")
 rep('    <div class="drop" id="drop">', (ROOT/'src'/'inbox.html').read_text(encoding='utf-8') + '    <div class="drop" id="drop">')
 rep("  setStoreLine(); whereTag();\n  loadDeco();", "  setStoreLine(); if(window.DRIVE) driveLine(); whereTag();\n  loadDeco();")

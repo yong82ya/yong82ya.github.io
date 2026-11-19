@@ -4,7 +4,36 @@
 const LS={ get:(k,d)=>{ try{ const v=localStorage.getItem(k); return v==null?d:v; }catch{ return d; } }, set:(k,v)=>{ try{ v==null?localStorage.removeItem(k):localStorage.setItem(k,v); }catch{} } };
 const KEY='desk.ai.gemini.key', MODEL='desk.ai.gemini.model', MODELS='desk.ai.gemini.models';
 const API='https://generativelanguage.googleapis.com/v1beta';
-const hasKey=()=>!!LS.get(KEY,'');
+const hasGemini=()=>!!LS.get(KEY,'');
+/* Groq: a second, free and very fast road for short text (no pictures). Long or scanned material still goes to Gemini. */
+const GKEY='desk.ai.groq.key', GAPI='https://api.groq.com/openai/v1';
+const GMODELS=['llama-3.3-70b-versatile','openai/gpt-oss-120b','llama-3.1-8b-instant'];
+const GROQ_MAX=6000;   // characters of question+document Groq's free plan takes in one go (its per-minute token cap is small)
+const hasGroq=()=>!!LS.get(GKEY,'');
+const hasKey=()=>hasGemini()||hasGroq();
+async function groqSample(msgs,opts){
+  const key=LS.get(GKEY,''); let last=null;
+  for(const model of GMODELS){
+    const ctl=new AbortController(); const onStop=()=>ctl.abort('stop'); opts.signal?.addEventListener('abort',onStop,{once:true});
+    let wd=setTimeout(()=>ctl.abort('slow'),20000);
+    try{
+      const r=await fetch(`${GAPI}/chat/completions`,{method:'POST',signal:ctl.signal,headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
+        body:JSON.stringify({model,stream:true,temperature:0.3,max_tokens:2048,messages:msgs.map(m=>({role:m.role==='assistant'?'assistant':'user',content:String(m.content||'')}))})});
+      if(!r.ok){ let msg=''; try{ msg=(await r.json())?.error?.message||''; }catch{}
+        if(r.status===401) throw {groq:true,code:'bad_key',message:'Groq 키가 맞지 않습니다. 설정 → AI 연결에서 다시 넣어 주세요.'};
+        last={groq:true,code:r.status===429||r.status===413?'rate_limited':'error',message:msg}; continue; }
+      const rd=r.body.getReader(), dec=new TextDecoder(); let buf='', text='';
+      const arm=()=>{ clearTimeout(wd); wd=setTimeout(()=>ctl.abort('stall'),30000); }; arm();
+      for(;;){ const {value,done}=await rd.read(); if(done) break; buf+=dec.decode(value,{stream:true}); arm();
+        let i; while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i).trim(); buf=buf.slice(i+1); if(!line.startsWith('data:')) continue; const d=line.slice(5).trim(); if(d==='[DONE]') continue;
+          try{ const j=JSON.parse(d); const t=j.choices?.[0]?.delta?.content||''; if(t){ text+=t; opts.onText?.({text,delta:t}); } }catch{} } }
+      if(!text.trim()){ last={groq:true,code:'error',message:'빈 답'}; continue; }
+      return {text, modelApplied:'Groq · '+model};
+    }catch(e){ if(opts.signal?.aborted) throw {code:'cancelled'}; if(e?.code==='bad_key') throw e; last={groq:true,code:'error',message:e?.message||String(ctl.signal.reason||'')}; }
+    finally{ clearTimeout(wd); opts.signal?.removeEventListener('abort',onStop); }
+  }
+  throw last||{groq:true,code:'error',message:'Groq가 답하지 못했습니다'};
+}
 const fallback='gemini-2.5-flash';
 
 // models this key can use, best first (names change over time, so ask Google instead of hard-coding).
@@ -32,7 +61,13 @@ async function apiErr(r){
 const b64=blob=>new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(String(fr.result).split(',')[1]); fr.onerror=()=>rej(fr.error); fr.readAsDataURL(blob); });
 
 async function sample(input, opts={}){
-  const key=LS.get(KEY,''); if(!key) throw {gemini:true,code:'not_granted',message:'설정 → AI 연결에서 제미나이 키를 넣어 주세요.'};
+  const msgs0=typeof input==='string'?[{role:'user',content:input}]:input;
+  const size=msgs0.reduce((a,m)=>a+String(m.content||'').length,0);
+  if(hasGroq() && !opts.images?.length && size<=GROQ_MAX){
+    try{ return await groqSample(msgs0,opts); }
+    catch(e){ if(e?.code==='cancelled') throw e; if(!hasGemini()) throw {gemini:true,code:e?.code==='bad_key'?'bad_key':'error',message:e?.code==='bad_key'?e.message:'Groq가 답하지 못했습니다'+(e?.message?` (${String(e.message).slice(0,100)})`:'')+'. 제미나이 키도 넣어 두면 대신 답해요.'}; console.warn('groq → gemini',e); opts.onText?.({text:'*Groq가 답하지 않아 제미나이로 바꾸는 중…*',delta:''}); }
+  }
+  const key=LS.get(KEY,''); if(!key) throw {gemini:true,code:'not_granted',message:opts.images?.length?'스캔본(사진)은 제미나이만 읽을 수 있어요. 설정 → AI 연결에서 제미나이 키를 넣어 주세요.':(size>GROQ_MAX&&hasGroq()?'글이 길어서 Groq 무료 한도를 넘어요. 범위를 줄이거나 제미나이 키도 넣어 주세요.':'설정 → AI 연결에서 제미나이 키를 넣어 주세요.')};
   let model=LS.get(MODEL,''); if(!model){ try{ model=await pickModel(key); LS.set(MODEL,model); }catch(e){ if(e?.code) throw e; model=fallback; } }
   let spares=[]; try{ spares=JSON.parse(LS.get(MODELS,'[]')); }catch{}
   if(!spares.length){ try{ spares=await listModels(key); LS.set(MODELS,JSON.stringify(spares)); }catch{} }
@@ -109,7 +144,13 @@ async function ping(model){
   let r=await withTimeout(call(gc),40000,'40초 응답 없음'); if(!r.ok&&gc){ const e=await apiErr(r.clone()); if(/thinking/i.test(e.message)) r=await withTimeout(call(),40000,'40초 응답 없음'); }
   if(!r.ok) throw await apiErr(r); return Math.round(performance.now()-t0);
 }
-window.DESK_AI={ hasKey, sample, test, ping,
+window.DESK_AI={ hasKey, hasGemini, hasGroq, sample, test, ping,
+  groqKey:()=>LS.get(GKEY,''),
+  async setGroq(k){ k=String(k||'').trim().replace(/\s+/g,''); if(!/^gsk_/.test(k)) throw {message:'Groq 키는 gsk_ 로 시작해요'};
+    let r; try{ r=await withTimeout(fetch(`${GAPI}/models`,{headers:{'Authorization':'Bearer '+k}}),15000,'Groq가 15초 동안 답하지 않았습니다'); }catch(e){ throw {message:e?.message||'Groq에 연결하지 못했습니다'}; }
+    if(r.status===401) throw {message:'Groq 키가 맞지 않습니다'}; if(!r.ok) throw {message:'Groq 확인 실패 ('+r.status+')'};
+    LS.set(GKEY,k); return true; },
+  clearGroq(){ LS.set(GKEY,null); },
   models:()=>{ try{ return JSON.parse(LS.get(MODELS,'[]')); }catch{ return []; } },
   async refreshModels(){ const l=await listModels(LS.get(KEY,'')); LS.set(MODELS,JSON.stringify(l)); return l; },
   setModel(m){ LS.set(MODEL,m); },

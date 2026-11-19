@@ -1,9 +1,19 @@
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
-  const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결 (제미나이)'; const body=$('#sheetBody'); body.replaceChildren();
+  const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결'; const body=$('#sheetBody'); body.replaceChildren();
   const p=(t,h)=>{ const x=el('p'); if(h) x.innerHTML=t; else x.textContent=t; x.style.margin='0 0 10px'; return x; };
   const box=el('div','fpick');
-  if(A.hasKey()){
+  // Groq: quick answers for short text
+  { const g=el('div'); g.style.cssText='border:1px solid var(--line);border-radius:12px;padding:12px;margin:0 0 14px';
+    g.append(p(`<b>⚡ Groq (빠른 답)</b> · ${A.hasGroq()?'켜짐':'꺼짐'}`,true),
+      p('<small>짧은 글(약 6천 자까지)의 요약·질문은 Groq가 아주 빨리 답하고, 긴 글과 스캔본(사진)은 아래 제미나이가 맡아요. Groq가 막히면 제미나이로 자동으로 넘어가요. 키 받기: <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> → Create API Key (gsk_로 시작)</small>',true));
+    const row=el('div','fpick'); const gi=el('input'); gi.placeholder=A.hasGroq()?'새 Groq 키로 바꾸려면 붙여넣기':'gsk_로 시작하는 Groq 키 붙여넣기'; gi.autocomplete='off'; gi.spellcheck=false; row.append(gi);
+    const bt=el('div'); bt.style.cssText='display:flex;gap:8px;margin-top:8px;justify-content:flex-end';
+    const gs=el('button','btn btn-primary','Groq 연결'); gs.onclick=async()=>{ gs.disabled=true; gs.textContent='확인 중…'; try{ await A.setGroq(gi.value); samp=null; toast('Groq 연결됨 · 짧은 글은 이제 빨라져요',3500); openAiPanel(); }catch(e){ toast(e?.message||'Groq 키를 확인하지 못했습니다',4500); } finally{ gs.disabled=false; gs.textContent='Groq 연결'; } };
+    if(A.hasGroq()){ const go=el('button','btn btn-ghost','Groq 끊기'); go.onclick=()=>{ A.clearGroq(); samp=null; toast('Groq 연결을 끊었습니다'); openAiPanel(); }; bt.append(go); }
+    bt.append(gs); g.append(row,bt); body.append(g); }
+  body.append(p('<b>제미나이</b> · 긴 글, 스캔본',true));
+  if(A.hasGemini()){
     body.append(p(`켜짐 · 지금 쓰는 모델 ${A.model()||'자동'}`), p('이 앱에서 AI 요약과 질문이 제미나이로 됩니다. 키는 이 기기에만 저장돼요. 느리면 아래에서 속도를 시험해 보고 빠른 모델을 고르세요.'));
     // model list with a speed test; the chosen one is tried first, the rest stay as spares
     const ml=el('div','fpick'); body.append(ml);
@@ -22,16 +32,16 @@ function openAiPanel(){
       p('<b>키 받는 법</b><br>1. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> 를 열고 구글 계정으로 로그인<br>2. <b>API 키 만들기</b>(Create API key)를 누르기<br>3. 나온 키(AQ. 또는 AIza로 시작)를 복사해서 아래에 붙여넣기',true),
       p('키는 이 기기에만 저장돼요. 아이패드·노트북·폰에서 각각 한 번씩 넣어 주세요. 무료 키로 보낸 내용은 구글이 서비스 개선에 쓸 수 있으니, 아주 개인적인 문서는 조심하세요.'));
   }
-  const inp=el('input'); inp.placeholder=A.hasKey()?'새 키로 바꾸려면 여기에 붙여넣기':'AQ. 또는 AIza로 시작하는 키 붙여넣기'; inp.autocomplete='off'; inp.spellcheck=false; box.append(inp); body.append(box);
+  const inp=el('input'); inp.placeholder=A.hasGemini()?'새 키로 바꾸려면 여기에 붙여넣기':'AQ. 또는 AIza로 시작하는 키 붙여넣기'; inp.autocomplete='off'; inp.spellcheck=false; box.append(inp); body.append(box);
   const acts=$('#sheetActs'); acts.replaceChildren();
   const close=el('button','btn btn-ghost','닫기'); close.onclick=()=>scrim.hidden=true;
-  const save=el('button','btn btn-primary','연결 확인하고 저장');
+  const save=el('button','btn btn-primary','제미나이 연결');
   save.onclick=async()=>{ const k=inp.value.trim(); if(!k){ toast('키를 붙여넣어 주세요'); return; } save.disabled=true; save.textContent='확인 중…';
     try{ const m=await A.setKey(k,t=>{ save.textContent=t; }); toast(`제미나이 연결됨 · ${m}`,3500); scrim.hidden=true; samp=null; }
     catch(e){ toast(e?.message||'키를 확인하지 못했습니다',4500); }
-    finally{ save.disabled=false; save.textContent='연결 확인하고 저장'; } };
+    finally{ save.disabled=false; save.textContent='제미나이 연결'; } };
   acts.append(close);
-  if(A.hasKey()){ const off=el('button','btn btn-ghost','연결 끊기'); off.onclick=()=>{ A.clear(); samp=null; toast('제미나이 연결을 끊었습니다'); scrim.hidden=true; }; acts.append(off); }
+  if(A.hasGemini()){ const off=el('button','btn btn-ghost','제미나이 끊기'); off.onclick=()=>{ A.clear(); samp=null; toast('제미나이 연결을 끊었습니다'); scrim.hidden=true; }; acts.append(off); }
   // step-by-step check of the road to Google's AI, with timings, to see where it stops
   const diag=el('button','btn btn-ghost','연결 진단'); const out=el('pre'); out.style.cssText='white-space:pre-wrap;font:12px/1.5 var(--f-mono);background:var(--bg);border-radius:8px;padding:8px;margin:8px 0 0;display:none';
   diag.onclick=async()=>{ out.style.display='block'; out.textContent=''; const log=t=>out.textContent+=t+'\n'; const k=(inp.value.trim()||A.key()).replace(/\s+/g,'');

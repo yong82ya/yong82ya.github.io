@@ -2836,7 +2836,12 @@ async function ask(){
     }
     const scanned=pages.every(p=>p.seg.length<40);
     const hist=AI.chat.slice(-6).map(m=>`${m.who==='me'?'학생':'조교'}: ${m.text}`).join('\n');
-    const prompt=`너는 대학생의 공부를 돕는 친절한 조교다. 아래 문서 "${aiName()}"의 내용을 근거로 답해. 학생은 지금 ${AI.src==='doc'?CUR+'번째 구간':CUR+'쪽'}을 보고 있다. ${RULES} 근거가 되는 쪽은 (p.N)으로 표시하고, 문서에 없는 내용을 덧붙일 때는 "문서 밖 설명"이라고 밝혀. 너무 길지 않게, 이해하기 쉽게 답해.\n\n=== 문서 내용 ===\n${pages.map(p=>p.seg).join('\n')}\n=== 끝 ===\n${hist?`\n지금까지 대화:\n${hist}\n`:''}\n학생 질문: ${q}`;
+    const prompt=`너는 대학생의 공부를 돕는 친절한 조교다. 아래 문서 "${aiName()}"를 먼저 보고 답해. 학생은 지금 ${AI.src==='doc'?CUR+'번째 구간':CUR+'쪽'}을 보고 있다. 원문이 영어여도 한국어로 답해. 각 쪽 내용은 [p.N] 표시 뒤에 이어진다.
+답하는 규칙:
+1. 문서에 답이 있으면 문서를 근거로 답하고, 근거가 되는 쪽을 (p.N)으로 표시해.
+2. 문서에 없거나 문서만으로 부족한 질문이어도 "문서에 없다"며 답을 거절하지 마. 네가 아는 일반 지식(학설, 개념, 법령, 역사, 사례 등)으로 충분히 답해 줘. 그 부분은 앞에 **[문서 밖 설명]**이라고 붙여서 문서 내용과 구분해.
+3. 문서 밖 설명에는 (p.N)을 붙이지 마. 확실하지 않은 사실이나 최근에 바뀌었을 수 있는 내용(법 개정, 통계 수치 등)은 "확인이 필요하다"고 밝혀.
+4. 너무 길지 않게, 이해하기 쉽게 답해.\n\n=== 문서 내용 ===\n${pages.map(p=>p.seg).join('\n')}\n=== 끝 ===\n${hist?`\n지금까지 대화:\n${hist}\n`:''}\n학생 질문: ${q}`;
     const opts={signal:ctl.signal,onText:u=>{ bot.innerHTML=md(u.text); $('#askPane').scrollTop=1e9; }};
     if(scanned && AI.src==='pdf' && sampLimits?.images){ opts.images=[await pageJpeg(V.cur)]; }
     const r=await sample(scanned&&opts.images?prompt+'\n\n(글자가 없는 스캔본이라 지금 보는 쪽의 그림을 첨부했다.)':prompt, opts);
@@ -5068,7 +5073,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='11-19 14:04';
+const DESK_BUILD='11-19 14:08';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결'; const body=$('#sheetBody'); body.replaceChildren();

@@ -229,7 +229,8 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .stage{flex:1;position:relative;min-height:0}
 .scroller{position:absolute;inset:0;overflow:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .pages{display:flex;flex-direction:column;align-items:center;gap:18px;padding:20px 12px 140px;min-width:min-content}
-.page{position:relative;background:#fff;box-shadow:var(--shadow);flex:none;touch-action:pan-x pan-y pinch-zoom}
+html{touch-action:manipulation}
+.page{position:relative;background:#fff;box-shadow:var(--shadow);flex:none;touch-action:pan-x pan-y}
 .scroller.finger .page{touch-action:none}
 .scroller.hand .page{cursor:grab}
 .scroller.draw .page{cursor:crosshair}
@@ -430,7 +431,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .inkbar .dsz button[aria-pressed="true"]{background:var(--accent-weak)}
 .inkbar .dhint{font-size:12px;color:var(--muted);margin-left:6px}
 @media (max-width:900px){.inkbar .dhint{display:none}}
-#editor.inking #paper{cursor:crosshair;touch-action:pan-x pan-y pinch-zoom;-webkit-user-select:none;user-select:none}
+#editor.inking #paper{cursor:crosshair;touch-action:pan-x pan-y;-webkit-user-select:none;user-select:none}
 #editor.inking.dfinger #paper{touch-action:none}
 #editor.editing .paper{box-shadow:var(--shadow),0 0 0 2px var(--accent-weak)}
 @media (max-width:700px){.paper{padding:28px 20px}}
@@ -3393,6 +3394,20 @@ $('#zoomIn').onclick=()=>setZoom(V.zoom*1.2);
 $('#zoomOut').onclick=()=>setZoom(V.zoom/1.2);
 $('#zoomFit').onclick=()=>setZoom(1);
 scroller.addEventListener('wheel',e=>{ if(e.ctrlKey||e.metaKey){ e.preventDefault(); setZoom(V.zoom*(e.deltaY<0?1.1:1/1.1)); } },{passive:false});
+/* Two-finger pinch zooms the document only; menus and pen bar stay where they are.
+   (Left to the browser, a pinch enlarged the whole screen and pushed the menus out of view.) */
+function pinchZoom(el,get,set,onStart){
+  let pz=null; const dist=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+  el.addEventListener('touchstart',e=>{ if(e.touches.length===2){ pz={d:dist(e.touches),z:get(),raf:0,next:null}; onStart?.(); } },{passive:true});
+  el.addEventListener('touchmove',e=>{ if(!pz || e.touches.length!==2) return; e.preventDefault();
+    pz.next=pz.z*dist(e.touches)/Math.max(1,pz.d); if(!pz.raf) pz.raf=requestAnimationFrame(()=>{ if(!pz) return; pz.raf=0; if(Math.abs(pz.next/get()-1)>0.015) set(pz.next); }); },{passive:false});
+  const end=e=>{ if(pz && e.touches.length<2){ if(pz.next) set(pz.next); pz=null; } };
+  el.addEventListener('touchend',end,{passive:true}); el.addEventListener('touchcancel',end,{passive:true});
+}
+// a second finger means zoom, not writing: drop the stroke the first finger started
+pinchZoom(scroller,()=>V.zoom,z=>setZoom(z),()=>{ if(act && act.kind==='draw'){ const a=act; act=null; cancelAnimationFrame(a.raf); clearTimeout(a.holdT); try{ a.ctx.save(); a.ctx.setTransform(1,0,0,1,0,0); a.ctx.clearRect(0,0,a.live.width,a.live.height); a.ctx.restore(); }catch{} } });
+// Safari's own page zoom (pinch on the menus, double tap): off for this app
+document.addEventListener('gesturestart',e=>e.preventDefault()); document.addEventListener('gesturechange',e=>e.preventDefault());
 function relayout(){ if(!V.pages.length) return; const keep=V.cur; computeBase(); applySizes(); for(const P of V.pages){ P.rendered=0; if(P.visible) queueRender(P); } goToPage(keep,false); clampFloating(); }
 let rsT; window.addEventListener('resize',()=>{ clearTimeout(rsT); rsT=setTimeout(()=>{ if(!V.pages.length) return; const old=V.base; computeBase(); if(Math.abs(old-V.base)/old<0.02){ V.base=old; clampFloating(); return; } V.base=old; if(editing) commitText(); relayout(); },200); });
 try{ V.spread = localStorage.getItem('desk.spread')==='1'; }catch{}
@@ -4666,6 +4681,7 @@ paper.addEventListener('paste',e=>{
   if(html) document.execCommand('insertHTML',false,sanitize(html)); else document.execCommand('insertText',false,text);
 });
 paper.addEventListener('keydown',e=>{ if(ED.mode!=='edit') return; if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); clearTimeout(ED.saveT); saveDocContent(); } });
+pinchZoom(dSc,()=>ED.zoom,z=>{ ED.zoom=Math.min(2.5,Math.max(0.5,Math.round(z*100)/100)); dFit(); },()=>{ if(DI.act){ const a=DI.act; DI.act=null; clearTimeout(a.holdT); dLive(); } });
 $('#edZoomIn').onclick=()=>{ ED.zoom=Math.min(2,ED.zoom+0.1); dFit(); }; $('#edZoomOut').onclick=()=>{ ED.zoom=Math.max(0.6,ED.zoom-0.1); dFit(); };
 $('#edTitle').addEventListener('change',e=>{ const m=ED.meta; if(!m) return; const v=e.target.value.trim(); if(!v) return; m.name=v+'.'+(m.fmt==='md'?'md':m.fmt); writeEntry(m); });
 $('#edTitle').addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter') e.target.blur(); });
@@ -5090,7 +5106,7 @@ async function copyToClaude(){
   if(ok && appMode){ toast('글을 복사했습니다 · Claude 앱이나 사파리에서 클로드 버전 문서 작업대를 열고, 새 문서에 붙여넣은 뒤 AI → 강의 녹음 정리를 누르세요',9000); return; }
   if(ok){ const w=window.open('https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ','_blank'); if(!w) setTimeout(()=>location.href='https://claude.ai/artifact/11Yd9qdJcCkHJpmH19voWZ',1200); }
 }
-const DESK_BUILD='11-20 11:13';
+const DESK_BUILD='11-20 11:17';
 // settings panel: connect Gemini with the person's own free key (kept on this device only)
 function openAiPanel(){
   const A=window.DESK_AI; const scrim=$('#scrim'); $('#sheetTitle').textContent='AI 연결'; const body=$('#sheetBody'); body.replaceChildren();

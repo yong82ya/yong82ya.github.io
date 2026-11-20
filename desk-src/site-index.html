@@ -1936,15 +1936,28 @@ scroller.addEventListener('pointermove',e=>{
     const [x,y]=toNorm(act.P,ev); const lx=p[p.length-2], ly=p[p.length-1];
     if(Math.hypot(x-lx,y-ly)>=minD){ p.push(x,y); }
   }
+  { const a=act; const [x,y]=toNorm(a.P,e); holdArm(a,x,y,()=>{ if(act!==a || a.straight || a.kind!=='draw') return;
+      const q=a.s.p; if(!lineLike(q,250)) return;
+      a.straight=true; a.start=[q[0],q[1]]; a.s.p=[q[0],q[1],q[q.length-2],q[q.length-1]]; redrawLive(); }); }
   if(!act.raf) act.raf=requestAnimationFrame(()=>{ if(act){ act.raf=0; redrawLive(); } });
 },{passive:false});
+/* Hold to straighten (like GoodNotes): draw a line, keep the pen still on the page for a moment, and a
+   roughly straight stroke snaps to a clean line; keep holding and move to place its end. */
+const HOLD_MS=450;
+function lineLike(p,minLen){
+  const n=p.length/2; if(n<3) return false; const x0=p[0],y0=p[1],x1=p[p.length-2],y1=p[p.length-1];
+  const L=Math.hypot(x1-x0,y1-y0); if(L<minLen) return false;
+  let dev=0; for(let i=2;i<p.length-2;i+=2){ dev=Math.max(dev, Math.abs((x1-x0)*(y0-p[i+1])-(x0-p[i])*(y1-y0))/L); }
+  return dev<=Math.max(L*0.12, minLen*0.25);
+}
+function holdArm(a,x,y,fire){ if(a.hx==null || Math.hypot(x-a.hx,y-a.hy)>30){ a.hx=x; a.hy=y; clearTimeout(a.holdT); a.holdT=setTimeout(fire,HOLD_MS); } }
 function redrawLive(){ const {live,ctx,s}=act; ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,live.width,live.height); ctx.restore(); drawStroke(ctx,s); }
 function endGesture(e){
   if(tapStart && e?.type==='pointerup'){ const t=tapStart; tapStart=null; if(Math.hypot(e.clientX-t.x,e.clientY-t.y)<10 && Date.now()-t.t<400) seekToInk(t.P,t.e); }
   if(pan){ pan=null; scroller.style.cursor=''; return; }
   if(editing && e?.type==='pointerup' && document.activeElement!==editing.ta) editing.ta.focus();
   if(!act || (e && e.pointerId!==act.id)) return;
-  const a=act; act=null; cancelAnimationFrame(a.raf);
+  const a=act; act=null; cancelAnimationFrame(a.raf); clearTimeout(a.holdT);
   const pg=a.P.i+1;
   if(a.kind==='movetext'){ if(a.m){ drawInk(a.P); pushUndo({page:pg,add:[a.m],rem:[a.orig]}); markDirty(pg); } else if(e?.type==='pointerup') openText(a.P,a.orig.x,a.orig.y,a.orig); return; }
   if(a.kind==='cap'){ a.live.remove(); const poly=a.rect?rectPoly(a.pts):a.pts; const b=bbox(poly); if(b.w<120||b.h<120){ toast('영역을 조금 더 크게 그려 주세요',1600); return; } openCapture(a.P,poly,!a.rect); return; }
@@ -3931,13 +3944,17 @@ dSc.addEventListener('pointermove',e=>{
   const a=DI.act; if(!a || e.pointerId!==a.id) return; e.preventDefault();
   const evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];
   if(a.kind==='erase'){ for(const ev of (evs.length?evs:[e])) dErase(dPt(ev)); return; }
-  const q=a.s.p, minD=Math.max(6,a.s.w*0.15);
+  const minD=Math.max(6,a.s.w*0.15);
+  if(a.straight){ const [x1,y1]=dPt(e); a.s.p=[a.start[0],a.start[1],x1,y1]; if(!a.raf) a.raf=requestAnimationFrame(()=>{ a.raf=0; dLive(); }); return; }
+  const q=a.s.p;
   for(const ev of (evs.length?evs:[e])){ const [x,y]=dPt(ev); if(Math.hypot(x-q[q.length-2],y-q[q.length-1])>=minD) q.push(x,y); }
+  { const [x,y]=dPt(e); holdArm(a,x,y,()=>{ if(DI.act!==a || a.straight) return; const p=a.s.p; if(!lineLike(p,250)) return;
+      a.straight=true; a.start=[p[0],p[1]]; a.s.p=[p[0],p[1],p[p.length-2],p[p.length-1]]; dLive(); }); }
   if(!a.raf) a.raf=requestAnimationFrame(()=>{ a.raf=0; dLive(); });
 },{passive:false});
 function dLive(){ const a=DI.act; const ctx=dLv.getContext('2d'); const X=dXform(ctx,dLv); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,dLv.width,dLv.height); if(!a||a.kind!=='draw') return; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.setTransform(X.k,0,0,X.k,X.ox,X.oy); drawStroke(ctx,a.s); }
 function dEnd(e){
-  const a=DI.act; if(!a || (e && e.pointerId!==a.id)) return; DI.act=null; cancelAnimationFrame(a.raf);
+  const a=DI.act; if(!a || (e && e.pointerId!==a.id)) return; DI.act=null; cancelAnimationFrame(a.raf); clearTimeout(a.holdT);
   if(a.kind==='erase'){ if(a.rem.length){ DI.undo.push({add:[],rem:a.rem}); DI.redo=[]; dChanged(); } return; }
   const st=a.s; if(st.p.length===2) st.p.push(st.p[0]+1,st.p[1]);
   // hang it on the paragraph under its middle
